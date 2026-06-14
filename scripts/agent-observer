@@ -1,0 +1,24 @@
+#!/usr/bin/env sh
+set -eu
+
+SOURCE=$0
+CALLER_CWD=$(pwd)
+while [ -L "$SOURCE" ]; do
+	SCRIPT_DIR=$(CDPATH= cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)
+	TARGET=$(readlink "$SOURCE")
+	case "$TARGET" in
+		/*) SOURCE=$TARGET ;;
+		*) SOURCE=$SCRIPT_DIR/$TARGET ;;
+	esac
+done
+
+SCRIPT_DIR=$(CDPATH= cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)
+REPO_DIR=${AGENT_OBSERVER_REPO:-$(CDPATH= cd "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)}
+
+GOCACHE=${GOCACHE:-/tmp/agent-observer-gocache}
+GOMODCACHE=${GOMODCACHE:-/tmp/agent-observer-gomodcache}
+AGENT_OBSERVER_CALLER_CWD=${AGENT_OBSERVER_CALLER_CWD:-$CALLER_CWD}
+export GOCACHE GOMODCACHE AGENT_OBSERVER_CALLER_CWD
+
+cd "$REPO_DIR"
+exec go run ./cmd/agent-observer "$@"
