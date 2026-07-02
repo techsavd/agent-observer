@@ -26,7 +26,11 @@ const (
 
 type options struct {
 	command         command
+	providersList   string
 	claudeDir       string
+	codexDir        string
+	cursorDir       string
+	pluginsDir      string
 	tasksDir        string
 	teamsDir        string
 	maxFileSize     int64

@@ -1,0 +1,4 @@
+name = "broken"
+
+[session]
+id = "filename_stem"

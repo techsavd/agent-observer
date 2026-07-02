@@ -1,0 +1,14 @@
+name = "aider"
+
+[watch]
+globs = ["/tmp/aider-history/*.jsonl"]
+
+[session]
+id = "filename_stem"
+cwd = "field:cwd"
+text = "field:message.content.text"
+status = { mode = "recency", busy_within = "30s", idle_within = "10m" }
+
+[commands]
+launch = ["aider", "--message", "{prompt}"]
+resume = ["aider", "--resume", "{session_id}"]

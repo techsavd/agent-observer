@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/techsavd/agent-observer/core/schema"
@@ -22,6 +23,7 @@ type doctorReport struct {
 	GeneratedAt   time.Time                `json:"generated_at"`
 	Config        runConfig                `json:"config"`
 	Checks        []doctorCheck            `json:"checks"`
+	Sessions      int                      `json:"sessions"`
 	Batches       int                      `json:"batches"`
 	Tasks         int                      `json:"tasks"`
 	Warnings      []schema.WarningSnapshot `json:"warnings"`
@@ -29,22 +31,48 @@ type doctorReport struct {
 }
 
 func buildDoctorReport(config runConfig, world schema.WorldSnapshot) doctorReport {
+	checks := []doctorCheck{
+		pathCheck("tasks_dir", config.TasksDir, true),
+		pathCheck("teams_dir", config.TeamsDir, false),
+		valueCheck("max_file_size", config.MaxFileSize > 0, fmt.Sprintf("%d bytes", config.MaxFileSize)),
+		valueCheck("scan", true, fmt.Sprintf("completed with %d warnings", len(world.Warnings))),
+	}
+	checks = append(checks, providerChecks(world)...)
 	return doctorReport{
 		Version:       VersionString(),
 		SchemaVersion: schema.CurrentSchemaVersion,
 		GeneratedAt:   time.Now().UTC(),
 		Config:        config,
-		Checks: []doctorCheck{
-			pathCheck("tasks_dir", config.TasksDir, true),
-			pathCheck("teams_dir", config.TeamsDir, false),
-			valueCheck("max_file_size", config.MaxFileSize > 0, fmt.Sprintf("%d bytes", config.MaxFileSize)),
-			valueCheck("scan", true, fmt.Sprintf("completed with %d warnings", len(world.Warnings))),
-		},
-		Batches:  len(world.Batches),
-		Tasks:    len(world.Tasks),
-		Warnings: world.Warnings,
-		Stats:    world.Stats,
+		Checks:        checks,
+		Sessions:      len(world.Sessions),
+		Batches:       len(world.Batches),
+		Tasks:         len(world.Tasks),
+		Warnings:      world.Warnings,
+		Stats:         world.Stats,
 	}
+}
+
+// providerChecks reports each provider's detection state. A provider that is
+// not installed is informational, never a doctor failure.
+func providerChecks(world schema.WorldSnapshot) []doctorCheck {
+	names := make([]string, 0, len(world.Providers))
+	for name := range world.Providers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	checks := make([]doctorCheck, 0, len(names))
+	for _, name := range names {
+		info := world.Providers[name]
+		message := "not detected"
+		if info.Available {
+			message = "detected"
+			if info.CLIPath != "" {
+				message += ", cli " + info.CLIPath
+			}
+		}
+		checks = append(checks, doctorCheck{Name: "provider:" + name, OK: true, Message: message})
+	}
+	return checks
 }
 
 func pathCheck(name, path string, required bool) doctorCheck {
@@ -79,7 +107,7 @@ func dumpDoctorText(out io.Writer, report doctorReport) error {
 	fmt.Fprintln(out, "Agent Observer Doctor")
 	fmt.Fprintf(out, "Version: %s\n", report.Version)
 	fmt.Fprintf(out, "Schema: %s\n", report.SchemaVersion)
-	fmt.Fprintf(out, "Tasks: %d\nBatches: %d\nWarnings: %d\n", report.Tasks, report.Batches, len(report.Warnings))
+	fmt.Fprintf(out, "Sessions: %d\nTasks: %d\nBatches: %d\nWarnings: %d\n", report.Sessions, report.Tasks, report.Batches, len(report.Warnings))
 	fmt.Fprintln(out, "\nChecks")
 	for _, check := range report.Checks {
 		status := "ok"

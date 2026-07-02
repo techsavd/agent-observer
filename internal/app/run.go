@@ -22,6 +22,8 @@ import (
 	"github.com/techsavd/agent-observer/internal/claude"
 	"github.com/techsavd/agent-observer/internal/providers"
 	claudeprovider "github.com/techsavd/agent-observer/internal/providers/claude"
+	codexprovider "github.com/techsavd/agent-observer/internal/providers/codex"
+	cursorprovider "github.com/techsavd/agent-observer/internal/providers/cursor"
 	"github.com/techsavd/agent-observer/internal/tui"
 )
 
@@ -69,7 +71,11 @@ func Run(ctx context.Context, args []string) error {
 	defaultTeamsDir := filepath.Join(home, ".claude", "teams")
 	opts := options{
 		command:         commandDashboard,
+		providersList:   firstNonEmptyEnv("AGENT_OBSERVER_PROVIDERS"),
 		claudeDir:       firstNonEmptyEnv("AGENT_OBSERVER_CLAUDE_DIR"),
+		codexDir:        firstNonEmptyEnv("AGENT_OBSERVER_CODEX_DIR"),
+		cursorDir:       firstNonEmptyEnv("AGENT_OBSERVER_CURSOR_DIR"),
+		pluginsDir:      firstNonEmptyEnv("AGENT_OBSERVER_PLUGINS_DIR"),
 		tasksDir:        firstNonEmptyEnv("AGENT_OBSERVER_TASKS_DIR", "CLAUDE_TASKS_DIR"),
 		teamsDir:        firstNonEmptyEnv("AGENT_OBSERVER_TEAMS_DIR", "CLAUDE_TEAMS_DIR"),
 		maxFileSize:     envInt64("AGENT_OBSERVER_MAX_FILE_SIZE", claude.DefaultMaxFileSize),
@@ -102,7 +108,11 @@ func Run(ctx context.Context, args []string) error {
 		printUsage(fs.Output())
 		fs.PrintDefaults()
 	}
+	fs.StringVar(&opts.providersList, "providers", opts.providersList, "comma-separated providers: claude, codex, cursor, plugins (default all)")
 	fs.StringVar(&opts.claudeDir, "claude-dir", opts.claudeDir, "Claude Code state directory (default ~/.claude)")
+	fs.StringVar(&opts.codexDir, "codex-dir", opts.codexDir, "Codex CLI state directory (default ~/.codex)")
+	fs.StringVar(&opts.cursorDir, "cursor-dir", opts.cursorDir, "Cursor state directory (default ~/.cursor)")
+	fs.StringVar(&opts.pluginsDir, "plugins-dir", opts.pluginsDir, "provider manifest directory (default ~/.config/agent-observer/providers)")
 	fs.StringVar(&opts.tasksDir, "tasks-dir", opts.tasksDir, "Claude tasks directory")
 	fs.StringVar(&opts.teamsDir, "teams-dir", opts.teamsDir, "Claude teams directory")
 	fs.Int64Var(&opts.maxFileSize, "max-file-size", opts.maxFileSize, "maximum bytes to read per file")
@@ -157,14 +167,25 @@ func Run(ctx context.Context, args []string) error {
 		slog.String("tasks_dir", opts.tasksDir),
 		slog.String("teams_dir", opts.teamsDir),
 	)
-	adapters := providers.Build(providers.Config{
+	enabledProviders, err := providers.ParseEnabled(opts.providersList)
+	if err != nil {
+		return err
+	}
+	adapters, manifestErrs := providers.Build(providers.Config{
+		Enabled: enabledProviders,
 		Claude: claudeprovider.Config{
 			ClaudeDir:   opts.claudeDir,
 			TasksDir:    opts.tasksDir,
 			TeamsDir:    opts.teamsDir,
 			MaxFileSize: opts.maxFileSize,
 		},
+		Codex:      codexprovider.Config{CodexDir: opts.codexDir},
+		Cursor:     cursorprovider.Config{CursorDir: opts.cursorDir},
+		PluginsDir: opts.pluginsDir,
 	})
+	for path, manifestErr := range manifestErrs {
+		logger.Warn("invalid provider manifest", slog.String("path", path), slog.String("error", manifestErr.Error()))
+	}
 	memory := store.NewMemoryStore()
 	refresh := func(ctx context.Context) schema.WorldSnapshot {
 		snaps := make([]source.ProviderSnapshot, 0, len(adapters))

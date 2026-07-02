@@ -1,0 +1,2 @@
+{"role":"user","message":{"content":[{"type":"text","text":"Fix the flaky test in ci"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Found the race; patching the fixture setup."}]}}

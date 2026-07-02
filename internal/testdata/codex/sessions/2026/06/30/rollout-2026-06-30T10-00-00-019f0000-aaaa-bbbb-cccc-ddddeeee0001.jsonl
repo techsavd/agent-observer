@@ -1,0 +1,7 @@
+{"timestamp":"2026-06-30T10:00:00.000Z","type":"session_meta","payload":{"session_id":"019f0000-aaaa-bbbb-cccc-ddddeeee0001","id":"019f0000-aaaa-bbbb-cccc-ddddeeee0001","cwd":"/tmp/codex-project","originator":"codex cli","cli_version":"0.142.2","model_provider":"openai"}}
+{"timestamp":"2026-06-30T10:00:01.000Z","type":"turn_context","payload":{"turn_id":"t1","cwd":"/tmp/codex-project","model":"gpt-5.3-codex","effort":"medium"}}
+{"timestamp":"2026-06-30T10:00:02.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1","model_context_window":258400}}
+{"timestamp":"2026-06-30T10:00:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"Refactor the billing module"}}
+{"timestamp":"2026-06-30T10:00:10.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Refactoring billing now."}]}}
+{"timestamp":"2026-06-30T10:00:20.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":5000,"cached_input_tokens":100,"output_tokens":900,"total_tokens":5900}}}}
+{"timestamp":"2026-06-30T10:00:30.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1"}}
