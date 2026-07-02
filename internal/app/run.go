@@ -15,8 +15,13 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/techsavd/agent-observer/core/aggregate"
 	"github.com/techsavd/agent-observer/core/schema"
+	"github.com/techsavd/agent-observer/core/source"
+	"github.com/techsavd/agent-observer/core/store"
 	"github.com/techsavd/agent-observer/internal/claude"
+	"github.com/techsavd/agent-observer/internal/providers"
+	claudeprovider "github.com/techsavd/agent-observer/internal/providers/claude"
 	"github.com/techsavd/agent-observer/internal/tui"
 )
 
@@ -150,10 +155,22 @@ func Run(ctx context.Context, args []string) error {
 		slog.String("tasks_dir", opts.tasksDir),
 		slog.String("teams_dir", opts.teamsDir),
 	)
-	scanner := claude.NewScanner(opts.tasksDir, opts.teamsDir, opts.maxFileSize)
+	adapters := providers.Build(providers.Config{
+		Claude: claudeprovider.Config{
+			TasksDir:    opts.tasksDir,
+			TeamsDir:    opts.teamsDir,
+			MaxFileSize: opts.maxFileSize,
+		},
+	})
+	memory := store.NewMemoryStore()
 	refresh := func(ctx context.Context) schema.WorldSnapshot {
-		world := scanner.ScanContext(ctx)
+		snaps := make([]source.ProviderSnapshot, 0, len(adapters))
+		for _, adapter := range adapters {
+			snaps = append(snaps, adapter.Snapshot(ctx))
+		}
+		world := memory.Replace(aggregate.Merge(snaps))
 		logger.Debug("scan complete",
+			slog.Int("sessions", len(world.Sessions)),
 			slog.Int("tasks", len(world.Tasks)),
 			slog.Int("batches", len(world.Batches)),
 			slog.Int("warnings", len(world.Warnings)),
@@ -161,13 +178,7 @@ func Run(ctx context.Context, args []string) error {
 		)
 		return world
 	}
-	world := scanner.ScanContext(ctx)
-	logger.Debug("initial scan complete",
-		slog.Int("tasks", len(world.Tasks)),
-		slog.Int("batches", len(world.Batches)),
-		slog.Int("warnings", len(world.Warnings)),
-		slog.Duration("duration", world.Stats.LastDuration),
-	)
+	world := refresh(ctx)
 	telemetry := newTelemetryClient(opts)
 	trackTelemetry(ctx, logger, telemetry, buildTelemetryEvent("app.start", opts, world, ""))
 	trackTelemetry(ctx, logger, telemetry, buildTelemetryEvent("scan.summary", opts, world, ""))

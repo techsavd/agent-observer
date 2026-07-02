@@ -3,6 +3,8 @@ package source
 import (
 	"context"
 	"time"
+
+	"github.com/techsavd/agent-observer/core/schema"
 )
 
 type Kind string
@@ -24,25 +26,23 @@ type Record struct {
 	Size      int64
 }
 
-type Warning struct {
-	SourcePath string
-	Message    string
+// ProviderSnapshot is one provider's contribution to the merged world state.
+type ProviderSnapshot struct {
+	Provider string
+	Info     schema.ProviderInfo
+	Sessions map[string]schema.SessionSnapshot
+	Tasks    map[string]schema.TaskSnapshot
+	Batches  map[string]schema.BatchSnapshot
+	Warnings []schema.WarningSnapshot
+	Stats    schema.ScanStats
 }
 
-type Stats struct {
-	FilesScanned    int
-	CacheHits       int
-	SkippedOversize int
-	PartialRetries  int
-}
-
-type Snapshot struct {
-	Records  []Record
-	Warnings []Warning
-	Stats    Stats
-}
-
+// Adapter observes one provider's local state. Implementations must be safe
+// to call repeatedly; Snapshot should be cheap when nothing changed.
 type Adapter interface {
 	Name() string
-	Snapshot(ctx context.Context) Snapshot
+	Available() bool
+	Snapshot(ctx context.Context) ProviderSnapshot
+	// WatchPaths lists directories whose changes should trigger a rescan.
+	WatchPaths() []string
 }

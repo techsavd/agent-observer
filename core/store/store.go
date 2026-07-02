@@ -7,95 +7,71 @@ import (
 	"github.com/techsavd/agent-observer/core/schema"
 )
 
+// MemoryStore holds the latest merged world snapshot. Writers replace the
+// whole world; readers always get an independent deep copy.
 type MemoryStore struct {
-	mu       sync.RWMutex
-	tasks    map[string]schema.TaskSnapshot
-	batches  map[string]schema.BatchSnapshot
-	warnings []schema.WarningSnapshot
-	stats    schema.ScanStats
+	mu    sync.RWMutex
+	world schema.WorldSnapshot
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{
-		tasks:   map[string]schema.TaskSnapshot{},
-		batches: map[string]schema.BatchSnapshot{},
-	}
+	return &MemoryStore{world: schema.WorldSnapshot{
+		SchemaVersion: schema.CurrentSchemaVersion,
+		Providers:     map[string]schema.ProviderInfo{},
+		Sessions:      map[string]schema.SessionSnapshot{},
+		Tasks:         map[string]schema.TaskSnapshot{},
+		Batches:       map[string]schema.BatchSnapshot{},
+	}}
 }
 
-func (s *MemoryStore) Replace(tasks map[string]schema.TaskSnapshot, warnings []schema.WarningSnapshot, stats schema.ScanStats) schema.WorldSnapshot {
+func (s *MemoryStore) Replace(world schema.WorldSnapshot) schema.WorldSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.tasks = copyTasks(tasks)
-	s.warnings = append([]schema.WarningSnapshot{}, warnings...)
-	s.stats = stats
-	s.rebuildBatches()
-	return s.snapshotLocked()
+	s.world = copyWorld(world)
+	return copyWorld(s.world)
 }
 
 func (s *MemoryStore) Snapshot() schema.WorldSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.snapshotLocked()
+	return copyWorld(s.world)
 }
 
-func (s *MemoryStore) snapshotLocked() schema.WorldSnapshot {
-	return schema.WorldSnapshot{
-		SchemaVersion: schema.CurrentSchemaVersion,
-		Tasks:         copyTasks(s.tasks),
-		Batches:       copyBatches(s.batches),
-		Warnings:      append([]schema.WarningSnapshot{}, s.warnings...),
-		Stats:         s.stats,
+func copyWorld(in schema.WorldSnapshot) schema.WorldSnapshot {
+	out := in
+	out.Providers = make(map[string]schema.ProviderInfo, len(in.Providers))
+	for key, value := range in.Providers {
+		value.Warnings = append([]string{}, value.Warnings...)
+		out.Providers[key] = value
 	}
-}
-
-func (s *MemoryStore) rebuildBatches() {
-	batches := map[string]schema.BatchSnapshot{}
-	for _, task := range s.tasks {
-		batch := batches[task.BatchID]
-		batch.BatchID = task.BatchID
-		batch.TaskIDs = append(batch.TaskIDs, task.ID)
-		if task.LastUpdated.After(batch.LastUpdated) {
-			batch.LastUpdated = task.LastUpdated
+	out.Sessions = make(map[string]schema.SessionSnapshot, len(in.Sessions))
+	for key, value := range in.Sessions {
+		if value.Tokens != nil {
+			tokens := *value.Tokens
+			value.Tokens = &tokens
 		}
-		addCount(&batch.Counts, task.Status)
-		batches[task.BatchID] = batch
+		out.Sessions[key] = value
 	}
-	s.batches = batches
-}
-
-func copyTasks(in map[string]schema.TaskSnapshot) map[string]schema.TaskSnapshot {
-	out := make(map[string]schema.TaskSnapshot, len(in))
-	for key, value := range in {
+	out.Tasks = make(map[string]schema.TaskSnapshot, len(in.Tasks))
+	for key, value := range in.Tasks {
 		value.ActiveFiles = append([]schema.ActiveFile{}, value.ActiveFiles...)
-		out[key] = value
+		out.Tasks[key] = value
 	}
-	return out
-}
-
-func copyBatches(in map[string]schema.BatchSnapshot) map[string]schema.BatchSnapshot {
-	out := make(map[string]schema.BatchSnapshot, len(in))
-	for key, value := range in {
+	out.Batches = make(map[string]schema.BatchSnapshot, len(in.Batches))
+	for key, value := range in.Batches {
 		value.TaskIDs = append([]string{}, value.TaskIDs...)
-		out[key] = value
+		if value.HighWatermark != nil {
+			hw := *value.HighWatermark
+			value.HighWatermark = &hw
+		}
+		if value.HasLock != nil {
+			lock := *value.HasLock
+			value.HasLock = &lock
+		}
+		out.Batches[key] = value
 	}
+	out.Warnings = append([]schema.WarningSnapshot{}, in.Warnings...)
 	return out
-}
-
-func addCount(counts *schema.BatchCounts, status schema.TaskStatus) {
-	switch status {
-	case schema.StatusRunning:
-		counts.Running++
-	case schema.StatusWaiting:
-		counts.Waiting++
-	case schema.StatusBlocked:
-		counts.Blocked++
-	case schema.StatusCompleted:
-		counts.Completed++
-	case schema.StatusErrored:
-		counts.Errored++
-	default:
-		counts.Unknown++
-	}
 }
 
 func Latest(a, b time.Time) time.Time {
