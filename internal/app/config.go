@@ -12,6 +12,7 @@ import (
 
 const (
 	defaultRefreshInterval = time.Second
+	defaultPollInterval    = 5 * time.Second
 	minRefreshInterval     = 200 * time.Millisecond
 	maxRefreshInterval     = time.Minute
 )
@@ -35,6 +36,8 @@ type options struct {
 	teamsDir        string
 	maxFileSize     int64
 	refreshInterval time.Duration
+	pollInterval    time.Duration
+	noWatch         bool
 	debug           bool
 	dumpJSON        bool
 	dumpText        bool
@@ -109,6 +112,12 @@ func validateOptions(opts *options) error {
 	}
 	if opts.refreshInterval < minRefreshInterval || opts.refreshInterval > maxRefreshInterval {
 		return fmt.Errorf("--refresh-interval must be between %s and %s", minRefreshInterval, maxRefreshInterval)
+	}
+	if opts.pollInterval == 0 {
+		opts.pollInterval = defaultPollInterval
+	}
+	if opts.pollInterval < minRefreshInterval || opts.pollInterval > maxRefreshInterval {
+		return fmt.Errorf("--poll-interval must be between %s and %s", minRefreshInterval, maxRefreshInterval)
 	}
 	opts.focus = strings.ToLower(strings.TrimSpace(opts.focus))
 	switch opts.focus {

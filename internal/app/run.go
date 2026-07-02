@@ -20,6 +20,7 @@ import (
 	"github.com/techsavd/agent-observer/core/source"
 	"github.com/techsavd/agent-observer/core/store"
 	"github.com/techsavd/agent-observer/internal/claude"
+	"github.com/techsavd/agent-observer/internal/engine"
 	"github.com/techsavd/agent-observer/internal/providers"
 	claudeprovider "github.com/techsavd/agent-observer/internal/providers/claude"
 	codexprovider "github.com/techsavd/agent-observer/internal/providers/codex"
@@ -80,6 +81,8 @@ func Run(ctx context.Context, args []string) error {
 		teamsDir:        firstNonEmptyEnv("AGENT_OBSERVER_TEAMS_DIR", "CLAUDE_TEAMS_DIR"),
 		maxFileSize:     envInt64("AGENT_OBSERVER_MAX_FILE_SIZE", claude.DefaultMaxFileSize),
 		refreshInterval: envDuration("AGENT_OBSERVER_REFRESH_INTERVAL", defaultRefreshInterval),
+		pollInterval:    envDuration("AGENT_OBSERVER_POLL_INTERVAL", defaultPollInterval),
+		noWatch:         envBool("AGENT_OBSERVER_NO_WATCH", false),
 		shell:           envBool("AGENT_OBSERVER_SHELL", false),
 		noShell:         envBool("AGENT_OBSERVER_NO_SHELL", false),
 		redact:          envBool("AGENT_OBSERVER_REDACT", false),
@@ -116,7 +119,9 @@ func Run(ctx context.Context, args []string) error {
 	fs.StringVar(&opts.tasksDir, "tasks-dir", opts.tasksDir, "Claude tasks directory")
 	fs.StringVar(&opts.teamsDir, "teams-dir", opts.teamsDir, "Claude teams directory")
 	fs.Int64Var(&opts.maxFileSize, "max-file-size", opts.maxFileSize, "maximum bytes to read per file")
-	fs.DurationVar(&opts.refreshInterval, "refresh-interval", opts.refreshInterval, "TUI refresh interval")
+	fs.DurationVar(&opts.refreshInterval, "refresh-interval", opts.refreshInterval, "legacy scan interval; used when filesystem watching is unavailable")
+	fs.DurationVar(&opts.pollInterval, "poll-interval", opts.pollInterval, "safety-net rescan interval behind filesystem watching")
+	fs.BoolVar(&opts.noWatch, "no-watch", opts.noWatch, "disable filesystem watching; poll only")
 	fs.BoolVar(&opts.debug, "debug", false, "show debug UI")
 	fs.BoolVar(&opts.dumpJSON, "dump-json", false, "dump snapshot JSON and exit")
 	fs.BoolVar(&opts.dumpText, "dump-text", false, "dump snapshot text and exit")
@@ -187,20 +192,16 @@ func Run(ctx context.Context, args []string) error {
 		logger.Warn("invalid provider manifest", slog.String("path", path), slog.String("error", manifestErr.Error()))
 	}
 	memory := store.NewMemoryStore()
+	scanEngine := engine.New(adapters, memory, logger, engine.Config{
+		PollInterval: opts.pollInterval,
+		WatchEnabled: !opts.noWatch,
+	})
 	refresh := func(ctx context.Context) schema.WorldSnapshot {
 		snaps := make([]source.ProviderSnapshot, 0, len(adapters))
 		for _, adapter := range adapters {
 			snaps = append(snaps, adapter.Snapshot(ctx))
 		}
-		world := memory.Replace(aggregate.Merge(snaps))
-		logger.Debug("scan complete",
-			slog.Int("sessions", len(world.Sessions)),
-			slog.Int("tasks", len(world.Tasks)),
-			slog.Int("batches", len(world.Batches)),
-			slog.Int("warnings", len(world.Warnings)),
-			slog.Duration("duration", world.Stats.LastDuration),
-		)
-		return world
+		return memory.Replace(aggregate.Merge(snaps))
 	}
 	world := refresh(ctx)
 	telemetry := newTelemetryClient(opts)
@@ -258,12 +259,22 @@ func Run(ctx context.Context, args []string) error {
 	if opts.dumpText {
 		return dumpTextSummary(os.Stdout, outputWorld, opts.focus)
 	}
-	model := tui.New(world, opts.debug, refresh).WithRefreshInterval(opts.refreshInterval)
+	model := tui.New(world, opts.debug, refresh)
 	if opts.command == commandWatch {
-		model = tui.NewWatch(world, opts.debug, refresh).WithRefreshInterval(opts.refreshInterval)
+		model = tui.NewWatch(world, opts.debug, refresh)
 	}
-	model = model.WithShellEnabled(shellEnabled(opts))
-	_, err = tea.NewProgram(model, tea.WithContext(ctx), tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
+	model = model.
+		WithRefreshInterval(opts.refreshInterval).
+		WithRefreshRequester(scanEngine.RequestRefresh).
+		WithShellEnabled(shellEnabled(opts))
+	engineCtx, stopEngine := context.WithCancel(ctx)
+	defer stopEngine()
+	program := tea.NewProgram(model, tea.WithContext(ctx), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	go scanEngine.Run(engineCtx, func(world schema.WorldSnapshot) {
+		program.Send(tui.SnapshotMsg(world))
+	})
+	_, err = program.Run()
+	stopEngine()
 	if err != nil {
 		trackTelemetry(context.Background(), logger, telemetry, buildTelemetryEvent("app.error", opts, world, errorCategory(err)))
 	}

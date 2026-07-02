@@ -29,8 +29,11 @@ type Model struct {
 	world        schema.WorldSnapshot
 	refresh      func(context.Context) schema.WorldSnapshot
 	refreshEvery time.Duration
-	width        int
-	height       int
+	// requestRefresh pokes the external scan engine; when set the model no
+	// longer drives scans from its own timer.
+	requestRefresh func()
+	width          int
+	height         int
 
 	focus           string
 	selected        int
@@ -54,6 +57,13 @@ type Model struct {
 }
 
 type refreshMsg schema.WorldSnapshot
+
+// SnapshotMsg delivers a fresh world snapshot pushed from the scan engine
+// (via Program.Send) instead of pulled by the model's own timer.
+type SnapshotMsg schema.WorldSnapshot
+
+// uiTickMsg drives cheap periodic redraws (ages, spinners) without scanning.
+type uiTickMsg time.Time
 
 // runRow is one selectable row in the Runs panel: either a provider session
 // or a legacy task batch.
@@ -125,6 +135,14 @@ func (m Model) WithRefreshInterval(interval time.Duration) Model {
 	return m
 }
 
+// WithRefreshRequester switches the model to push mode: snapshots arrive as
+// SnapshotMsg from the engine, and r/refresh clicks call request instead of
+// scanning inline.
+func (m Model) WithRefreshRequester(request func()) Model {
+	m.requestRefresh = request
+	return m
+}
+
 func (m Model) WithShellEnabled(enabled bool) Model {
 	m.allowShell = enabled
 	if !enabled && m.shell != nil {
@@ -139,6 +157,10 @@ func (m Model) WithShellEnabled(enabled bool) Model {
 }
 
 func (m Model) Init() tea.Cmd {
+	if m.requestRefresh != nil {
+		// Push mode: the engine delivers SnapshotMsg; tick only to redraw ages.
+		return uiTick()
+	}
 	interval := m.refreshEvery
 	if interval <= 0 {
 		interval = time.Second
@@ -149,6 +171,10 @@ func (m Model) Init() tea.Cmd {
 		}
 		return refreshMsg(m.refresh(context.Background()))
 	})
+}
+
+func uiTick() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return uiTickMsg(t) })
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -175,6 +201,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.world = schema.WorldSnapshot(msg)
 		m.clamp()
 		return m, m.Init()
+	case SnapshotMsg:
+		m.world = schema.WorldSnapshot(msg)
+		m.clamp()
+		return m, nil
+	case uiTickMsg:
+		return m, uiTick()
 	case shellStartedMsg:
 		m.shellStarting = false
 		if msg.err != nil {
@@ -775,12 +807,12 @@ func (m Model) sessionDetailLines(session schema.SessionSnapshot, w int) []strin
 
 func (m Model) healthLines(w int) []string {
 	stats := m.world.Stats
-	lines := []string{fmt.Sprintf("warn %-2d cache %-3d partial %-2d oversized %-2d symlink %-2d",
+	lines := []string{fmt.Sprintf("warn %-2d cache %-3d partial %-2d oversized %-2d trig %s",
 		len(m.world.Warnings),
 		stats.CacheHits,
 		stats.PartialRetries,
 		stats.SkippedOversize,
-		stats.SkippedSymlinks,
+		first(stats.LastTrigger, "-"),
 	)}
 	warnings := m.warnings()
 	if len(warnings) == 0 {
@@ -1214,6 +1246,10 @@ func (m *Model) openShell() tea.Cmd {
 }
 
 func (m Model) refreshCmd() tea.Cmd {
+	if m.requestRefresh != nil {
+		m.requestRefresh()
+		return nil
+	}
 	if m.refresh == nil {
 		return nil
 	}

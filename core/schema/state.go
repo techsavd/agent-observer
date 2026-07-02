@@ -109,6 +109,8 @@ type WarningSnapshot struct {
 }
 
 type ScanStats struct {
+	// LastTrigger records what caused the latest scan: watch, poll, or manual.
+	LastTrigger     string        `json:"last_trigger,omitempty"`
 	FilesScanned    int           `json:"files_scanned"`
 	CacheHits       int           `json:"cache_hits"`
 	SkippedOversize int           `json:"skipped_oversize"`
