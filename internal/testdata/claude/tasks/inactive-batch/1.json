@@ -1,0 +1,5 @@
+{
+  "title": "Completed historical task",
+  "description": "Old completed task should be hidden unless inactive history is shown",
+  "status": "completed"
+}

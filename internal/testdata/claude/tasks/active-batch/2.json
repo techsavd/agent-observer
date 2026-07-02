@@ -1,0 +1,5 @@
+{
+  "title": "Review scanner warnings",
+  "description": "Reviewer should verify malformed JSON handling",
+  "status": "waiting"
+}

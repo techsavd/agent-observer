@@ -1,0 +1,104 @@
+#!/usr/bin/env sh
+set -eu
+
+SOURCE=$0
+while [ -L "$SOURCE" ]; do
+	SCRIPT_DIR=$(CDPATH= cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)
+	TARGET=$(readlink "$SOURCE")
+	case "$TARGET" in
+		/*) SOURCE=$TARGET ;;
+		*) SOURCE=$SCRIPT_DIR/$TARGET ;;
+	esac
+done
+
+SCRIPT_DIR=$(CDPATH= cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)
+REPO_DIR=$(CDPATH= cd "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
+TASKS_DIR="$REPO_DIR/internal/testdata/claude/tasks"
+TEAMS_DIR="$REPO_DIR/internal/testdata/claude/missing-teams"
+
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+arch=$(uname -m)
+case "$arch" in
+	arm64|aarch64) arch=arm64 ;;
+	x86_64|amd64) arch=amd64 ;;
+esac
+case "$os" in
+	darwin) platform_dir="darwin_${arch}" ;;
+	linux) platform_dir="linux_${arch}" ;;
+	*) platform_dir="" ;;
+esac
+
+BIN=${1:-}
+if [ -z "$BIN" ] && [ -n "$platform_dir" ]; then
+	candidate=$(find "$REPO_DIR/dist" -maxdepth 2 -type f -path "*/agent-observer_${platform_dir}*/agent-observer" 2>/dev/null | head -n 1 || true)
+	if [ -n "$candidate" ]; then
+		BIN=$candidate
+	fi
+fi
+
+if [ -z "$BIN" ]; then
+	echo "No matching dist binary found; building a temporary smoke-test binary..."
+	BIN=/tmp/agent-observer-smoke/agent-observer
+	mkdir -p "$(dirname "$BIN")"
+	(
+		cd "$REPO_DIR"
+		GOCACHE=${GOCACHE:-/tmp/agent-observer-gocache} \
+		GOMODCACHE=${GOMODCACHE:-/tmp/agent-observer-gomodcache} \
+		go build -o "$BIN" ./cmd/agent-observer
+	)
+fi
+
+if [ ! -x "$BIN" ]; then
+	echo "Binary is not executable: $BIN" >&2
+	exit 1
+fi
+
+pass() { printf 'ok - %s\n' "$1"; }
+fail() { printf 'not ok - %s\n' "$1" >&2; exit 1; }
+contains() {
+	printf '%s' "$1" | grep -F -- "$2" >/dev/null 2>&1
+}
+not_contains() {
+	! printf '%s' "$1" | grep -F -- "$2" >/dev/null 2>&1
+}
+
+echo "Testing binary: $BIN"
+
+version=$("$BIN" --version)
+contains "$version" "agent-observer" || fail "version output"
+pass "version output: $version"
+
+dump=$("$BIN" --dump-text --redact --tasks-dir "$TASKS_DIR" --teams-dir "$TEAMS_DIR")
+contains "$dump" "Agent Observer Snapshot" || fail "dump-text header"
+contains "$dump" "active-batch" || fail "dump-text fixture batch"
+pass "redacted text dump"
+
+doctor=$("$BIN" doctor --redact --tasks-dir "$TASKS_DIR" --teams-dir "$TEAMS_DIR")
+contains "$doctor" "Agent Observer Doctor" || fail "doctor header"
+contains "$doctor" "tasks_dir: ok" || fail "doctor tasks_dir check"
+not_contains "$doctor" "$REPO_DIR" || fail "doctor redacts repo path"
+pass "doctor redacted health check"
+
+diag=$("$BIN" --diagnostics --redact --tasks-dir "$TASKS_DIR" --teams-dir "$TEAMS_DIR")
+contains "$diag" '"shell_enabled": false' || fail "shell disabled by default"
+contains "$diag" '"telemetry_enabled": false' || fail "telemetry disabled by default"
+not_contains "$diag" "$REPO_DIR" || fail "diagnostics redacts repo path"
+pass "safe defaults in diagnostics"
+
+enabled=$("$BIN" --diagnostics --shell --telemetry=on --telemetry-endpoint https://telemetry.example.invalid/events --redact --tasks-dir "$TASKS_DIR" --teams-dir "$TEAMS_DIR")
+contains "$enabled" '"shell_enabled": true' || fail "explicit shell opt-in"
+contains "$enabled" '"telemetry_enabled": true' || fail "explicit telemetry opt-in"
+pass "explicit shell and telemetry opt-in"
+
+if "$BIN" --dump-text --shell --no-shell --tasks-dir "$TASKS_DIR" --teams-dir "$TEAMS_DIR" >/tmp/agent-observer-conflict.out 2>&1; then
+	fail "conflicting shell flags should fail"
+fi
+conflict=$(cat /tmp/agent-observer-conflict.out)
+contains "$conflict" "--shell and --no-shell cannot be used together" || fail "conflict error message"
+pass "conflicting shell flags fail"
+
+no_color=$(NO_COLOR=1 "$BIN" --dump-text --tasks-dir "$TASKS_DIR" --teams-dir "$TEAMS_DIR")
+not_contains "$no_color" "$(printf '\033')" || fail "NO_COLOR output should not contain ANSI escapes"
+pass "NO_COLOR smoke check"
+
+echo "Smoke test complete."

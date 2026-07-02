@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -14,15 +15,16 @@ import (
 )
 
 type shellSession struct {
-	cmd     *exec.Cmd
-	file    *os.File
-	cwd     string
-	shell   string
-	screen  *screen
-	raw     []string
-	partial string
-	closed  bool
-	err     error
+	cmd      *exec.Cmd
+	file     *os.File
+	cwd      string
+	shell    string
+	screen   *screen
+	raw      []string
+	partial  string
+	closed   bool
+	err      error
+	waitOnce sync.Once
 }
 
 var ansiPattern = regexp.MustCompile(`\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\a]*(?:\a|\x1b\\)|[()][0-9A-Za-z]|.)`)
@@ -137,6 +139,7 @@ func (s *shellSession) close() {
 	if s.cmd != nil && s.cmd.Process != nil {
 		_ = s.cmd.Process.Signal(syscall.SIGHUP)
 	}
+	s.reap()
 }
 
 func (s *shellSession) markClosed(err error) {
@@ -147,12 +150,24 @@ func (s *shellSession) markClosed(err error) {
 	if s.file != nil {
 		_ = s.file.Close()
 	}
+	s.reap()
 	if err != nil {
 		s.err = err
 		s.write("\r\nshell exited: " + err.Error() + "\r\n")
 		return
 	}
 	s.write("\r\nshell exited\r\n")
+}
+
+func (s *shellSession) reap() {
+	if s == nil || s.cmd == nil {
+		return
+	}
+	s.waitOnce.Do(func() {
+		go func() {
+			_ = s.cmd.Wait()
+		}()
+	})
 }
 
 func (s *shellSession) writeKey(msg tea.KeyMsg) error {

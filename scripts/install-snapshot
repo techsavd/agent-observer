@@ -1,0 +1,54 @@
+#!/usr/bin/env sh
+set -eu
+
+SOURCE=$0
+while [ -L "$SOURCE" ]; do
+	SCRIPT_DIR=$(CDPATH= cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)
+	TARGET=$(readlink "$SOURCE")
+	case "$TARGET" in
+		/*) SOURCE=$TARGET ;;
+		*) SOURCE=$SCRIPT_DIR/$TARGET ;;
+	esac
+done
+
+SCRIPT_DIR=$(CDPATH= cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)
+REPO_DIR=$(CDPATH= cd "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
+INSTALL_DIR=${1:-${HOME}/.local/bin}
+
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+arch=$(uname -m)
+case "$arch" in
+	arm64|aarch64) arch=arm64 ;;
+	x86_64|amd64) arch=amd64 ;;
+esac
+case "$os" in
+	darwin) platform_dir="darwin_${arch}" ;;
+	linux) platform_dir="linux_${arch}" ;;
+	*)
+		echo "Unsupported platform: $os/$arch" >&2
+		exit 1
+		;;
+esac
+
+BIN=$(find "$REPO_DIR/dist" -maxdepth 2 -type f -path "*/agent-observer_${platform_dir}*/agent-observer" 2>/dev/null | head -n 1 || true)
+if [ -z "$BIN" ]; then
+	echo "No snapshot binary found for $platform_dir." >&2
+	echo "Run 'make snapshot' first, or run scripts/smoke-test to build a temporary test binary." >&2
+	exit 1
+fi
+
+mkdir -p "$INSTALL_DIR"
+cp "$BIN" "$INSTALL_DIR/agent-observer"
+chmod +x "$INSTALL_DIR/agent-observer"
+
+echo "Installed: $INSTALL_DIR/agent-observer"
+echo
+echo "Try:"
+echo "  $INSTALL_DIR/agent-observer --version"
+echo "  $INSTALL_DIR/agent-observer doctor --redact"
+echo "  $INSTALL_DIR/agent-observer watch"
+echo
+case ":$PATH:" in
+	*":$INSTALL_DIR:"*) ;;
+	*) echo "Note: $INSTALL_DIR is not on PATH." ;;
+esac

@@ -1,0 +1,22 @@
+#compdef agent-observer
+
+_arguments -C \
+  '1:command:(watch doctor)' \
+  '--tasks-dir[Claude tasks directory]:directory:_files -/' \
+  '--teams-dir[Claude teams directory]:directory:_files -/' \
+  '--max-file-size[maximum bytes to read per file]:bytes:' \
+  '--refresh-interval[TUI refresh interval]:duration:' \
+  '--debug[show debug UI]' \
+  '--dump-json[dump snapshot JSON and exit]' \
+  '--dump-text[dump snapshot text and exit]' \
+  '--diagnostics[dump diagnostics JSON and exit]' \
+  '--version[print version and exit]' \
+  '--shell[enable the local shell pane]' \
+  '--no-shell[disable the local shell pane]' \
+  '--redact[redact local paths in support output]' \
+  '--log-file[append structured logs to this file]:file:_files' \
+  '--log-level[log level]:level:(debug info warn error)' \
+  '--telemetry[telemetry mode]:mode:(off on)' \
+  '--telemetry-endpoint[telemetry endpoint URL]:url:' \
+  '--focus[dump text focus]:focus:(all active blocked warnings)' \
+  '--help[show help]'

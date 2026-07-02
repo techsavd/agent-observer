@@ -5,6 +5,8 @@ import "time"
 type TaskStatus string
 type AgentRole string
 
+const CurrentSchemaVersion = "v1"
+
 const (
 	StatusRunning   TaskStatus = "running"
 	StatusWaiting   TaskStatus = "waiting"
@@ -20,10 +22,11 @@ const (
 )
 
 type WorldSnapshot struct {
-	Tasks    map[string]TaskSnapshot  `json:"tasks"`
-	Batches  map[string]BatchSnapshot `json:"batches"`
-	Warnings []WarningSnapshot        `json:"warnings"`
-	Stats    ScanStats                `json:"stats"`
+	SchemaVersion string                   `json:"schema_version"`
+	Tasks         map[string]TaskSnapshot  `json:"tasks"`
+	Batches       map[string]BatchSnapshot `json:"batches"`
+	Warnings      []WarningSnapshot        `json:"warnings"`
+	Stats         ScanStats                `json:"stats"`
 }
 
 type BatchSnapshot struct {
@@ -67,7 +70,11 @@ type WarningSnapshot struct {
 }
 
 type ScanStats struct {
-	FilesScanned int           `json:"files_scanned"`
-	Warnings     int           `json:"warnings"`
-	LastDuration time.Duration `json:"last_duration"`
+	FilesScanned    int           `json:"files_scanned"`
+	CacheHits       int           `json:"cache_hits"`
+	SkippedOversize int           `json:"skipped_oversize"`
+	SkippedSymlinks int           `json:"skipped_symlinks"`
+	PartialRetries  int           `json:"partial_retries"`
+	Warnings        int           `json:"warnings"`
+	LastDuration    time.Duration `json:"last_duration"`
 }

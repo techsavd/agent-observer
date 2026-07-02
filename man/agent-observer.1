@@ -1,0 +1,110 @@
+.TH AGENT-OBSERVER 1 "June 2026" "agent-observer" "User Commands"
+.SH NAME
+agent-observer \- terminal dashboard for local Claude Code task state
+.SH SYNOPSIS
+.B agent-observer
+[\fIflags\fR]
+.br
+.B agent-observer watch
+[\fIflags\fR]
+.br
+.B agent-observer doctor
+[\fIflags\fR]
+.SH DESCRIPTION
+.B agent-observer
+watches local Claude Code task files, derives batch and task status, and renders a terminal operations board.
+It is read-only toward Claude and does not call the Claude API.
+.SH COMMANDS
+.TP
+.B watch
+Start the live dashboard in watch mode.
+.TP
+.B doctor
+Validate configuration and print a support report.
+.SH FLAGS
+.TP
+.B --tasks-dir
+Claude tasks directory. Defaults to ~/.claude/tasks.
+.TP
+.B --teams-dir
+Claude teams directory. Defaults to ~/.claude/teams.
+.TP
+.B --max-file-size
+Maximum bytes to read per file.
+.TP
+.B --refresh-interval
+TUI refresh interval. Must be between 200ms and 1m.
+.TP
+.B --dump-json
+Dump snapshot JSON and exit.
+.TP
+.B --dump-text
+Dump snapshot text and exit.
+.TP
+.B --diagnostics
+Dump diagnostics JSON and exit.
+.TP
+.B --focus
+Text dump focus: all, active, blocked, or warnings.
+.TP
+.B --redact
+Redact local paths in dump, diagnostics, and doctor output.
+.TP
+.B --shell
+Enable the local shell pane. The shell pane is disabled by default.
+.TP
+.B --no-shell
+Disable the local shell pane. Kept as a compatibility alias for restricted environments.
+.TP
+.B --log-file
+Append structured logs to this file.
+.TP
+.B --log-level
+Log level: debug, info, warn, or error.
+.TP
+.B --telemetry
+Telemetry mode: off or on. Defaults to off.
+.TP
+.B --telemetry-endpoint
+HTTP endpoint for opt-in telemetry events.
+.TP
+.B --version
+Print version metadata and exit.
+.SH ENVIRONMENT
+.TP
+.B AGENT_OBSERVER_TASKS_DIR
+Default tasks directory.
+.TP
+.B AGENT_OBSERVER_TEAMS_DIR
+Default teams directory.
+.TP
+.B AGENT_OBSERVER_MAX_FILE_SIZE
+Default maximum file size.
+.TP
+.B AGENT_OBSERVER_REFRESH_INTERVAL
+Default refresh interval.
+.TP
+.B AGENT_OBSERVER_SHELL
+Enable the local shell pane when set to a true value.
+.TP
+.B AGENT_OBSERVER_NO_SHELL
+Disable the local shell pane when set to a true value.
+.TP
+.B AGENT_OBSERVER_REDACT
+Redact support output when set to a true value.
+.TP
+.B AGENT_OBSERVER_LOG_FILE
+Default log file.
+.TP
+.B AGENT_OBSERVER_LOG_LEVEL
+Default log level.
+.TP
+.B AGENT_OBSERVER_TELEMETRY
+Telemetry mode: off or on.
+.TP
+.B AGENT_OBSERVER_TELEMETRY_ENDPOINT
+HTTP endpoint for opt-in telemetry events.
+.SH SECURITY
+Task snapshots and diagnostics may include local paths, prompts, warnings, and timing metadata.
+Use --redact before sharing output.
+Telemetry is disabled by default and must not include task titles, prompts, local paths, active file paths, raw warnings, shell transcript, or dump payloads.
