@@ -55,6 +55,19 @@ type Model struct {
 
 type refreshMsg schema.WorldSnapshot
 
+// runRow is one selectable row in the Runs panel: either a provider session
+// or a legacy task batch.
+type runRow struct {
+	kind    string // "session" or "batch"
+	session schema.SessionSnapshot
+	batch   schema.BatchSnapshot
+}
+
+const (
+	rowSession = "session"
+	rowBatch   = "batch"
+)
+
 type rect struct {
 	x, y int
 	w, h int
@@ -330,7 +343,7 @@ func (m *Model) handlePanelClick(id string, panelRect rect, _, y int) {
 	switch id {
 	case panelRuns:
 		index := m.runOffset + line - runsStaticRows
-		if index >= 0 && index < len(m.batches()) {
+		if index >= 0 && index < len(m.runRows()) {
 			m.selected = index
 			m.taskSelected = 0
 		}
@@ -417,7 +430,9 @@ func (m Model) header() string {
 	}
 	mode := "mode:" + m.modeLabel()
 	line := fmt.Sprintf("%s  %s", title, mode)
-	metrics := trunc(fmt.Sprintf("runs %d/%d  tasks %d  blocked %d  warn %d  files %d  scan %s  filter %s%s",
+	metrics := trunc(fmt.Sprintf("sessions %d/%d  runs %d/%d  tasks %d  blocked %d  warn %d  files %d  scan %s  filter %s%s",
+		m.activeSessions(),
+		len(m.world.Sessions),
 		len(m.activeBatches()),
 		len(m.world.Batches),
 		len(m.world.Tasks),
@@ -474,7 +489,9 @@ func (m Model) batchPane(w, h int) string {
 
 func (m Model) taskPane(w, h int) string {
 	subtitle := "waiting"
-	if batch, ok := m.selectedBatch(); ok {
+	if session, ok := m.selectedSession(); ok {
+		subtitle = trunc(first(session.Title, session.ID), 18)
+	} else if batch, ok := m.selectedBatch(); ok {
 		subtitle = trunc(batch.BatchID, 18)
 	}
 	return renderPanel(panelRender{
@@ -601,39 +618,74 @@ func (m Model) runLines(w int) []string {
 	if m.filter != "" {
 		mode += " filtered"
 	}
-	lines := []string{fmt.Sprintf("view %-8s total %-2d live %-2d", mode, len(m.world.Batches), len(m.activeBatches()))}
-	batches := m.batches()
-	if len(batches) == 0 {
+	lines := []string{fmt.Sprintf("view %-8s total %-2d live %-2d", mode, len(m.world.Sessions)+len(m.world.Batches), m.activeSessions()+len(m.activeBatches()))}
+	rows := m.runRows()
+	if len(rows) == 0 {
 		if m.watchMode {
-			return append(lines, "No active run yet.", "Start a Claude Code task with subagents now.", "Waiting for local task files.")
+			return append(lines, "No active run yet.", "Start an agent session now.", "Waiting for provider files.")
 		}
 		return append(lines, "No runs match this view.", "Press i for history or esc to clear filters.")
 	}
-	for i, b := range batches {
-		label := "REC"
-		if !inactiveBatch(b) {
-			label = "CUR"
+	for i, row := range rows {
+		var line string
+		if row.kind == rowSession {
+			session := row.session
+			line = fmt.Sprintf("%-6s %-4s %-12s %s",
+				trunc(session.Provider, 6),
+				sessionStatusShort(session.Status),
+				trunc(first(session.Title, shortPath(session.CWD), session.ID), 12),
+				age(session.LastUpdated),
+			)
+		} else {
+			b := row.batch
+			label := "REC"
+			if !inactiveBatch(b) {
+				label = "CUR"
+			}
+			line = fmt.Sprintf("%-3s %-12s %-4s r%d w%d b%d e%d d%d",
+				label,
+				trunc(b.BatchID, 12),
+				batchStatusShort(b),
+				b.Counts.Running,
+				b.Counts.Waiting,
+				b.Counts.Blocked,
+				b.Counts.Errored,
+				b.Counts.Completed,
+			)
 		}
-		status := batchStatusShort(b)
-		line := fmt.Sprintf("%-3s %-12s %-4s r%d w%d b%d e%d d%d",
-			label,
-			trunc(b.BatchID, 12),
-			status,
-			b.Counts.Running,
-			b.Counts.Waiting,
-			b.Counts.Blocked,
-			b.Counts.Errored,
-			b.Counts.Completed,
-		)
 		lines = append(lines, selectableLine(trunc(line, max(20, w-6)), i == m.selected, m.focus == panelRuns))
 	}
 	return lines
 }
 
+// shortPath renders a cwd as its last two path elements for narrow panes.
+func shortPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	parts := strings.Split(strings.TrimRight(path, "/"), "/")
+	if len(parts) > 2 {
+		parts = parts[len(parts)-2:]
+	}
+	return strings.Join(parts, "/")
+}
+
 func (m Model) taskLines(w int) []string {
+	if session, ok := m.selectedSession(); ok {
+		width := max(20, w-6)
+		lines := []string{fmt.Sprintf("%s session %s", session.Provider, sessionStatusShort(session.Status))}
+		lines = append(lines, "cwd    "+first(session.CWD, "-"))
+		lines = append(lines, "model  "+first(session.Model, "-"))
+		lines = append(lines, fmt.Sprintf("turns  %d", session.Turns))
+		if session.LastText != "" {
+			lines = append(lines, "", "LAST MESSAGE")
+			lines = append(lines, wrapText(session.LastText, width)...)
+		}
+		return lines
+	}
 	batch, ok := m.selectedBatch()
 	if !ok {
-		return []string{"No Claude agent team detected yet.", "Start a Claude Code task with", "subagents now.", "This pane will populate automatically."}
+		return []string{"No agent session or team detected yet.", "Start a Claude Code, Codex, or Cursor", "agent task now.", "This pane will populate automatically."}
 	}
 	tasks := m.tasks(batch.BatchID)
 	lines := []string{"status     role      age       files  task"}
@@ -656,6 +708,9 @@ func (m Model) taskLines(w int) []string {
 }
 
 func (m Model) detailLines(w int) []string {
+	if session, ok := m.selectedSession(); ok {
+		return m.sessionDetailLines(session, w)
+	}
 	task, ok := m.selectedTask()
 	if !ok {
 		return []string{"Select a run and task to inspect status, files, and source metadata."}
@@ -685,6 +740,35 @@ func (m Model) detailLines(w int) []string {
 		for _, file := range task.ActiveFiles {
 			lines = append(lines, "- "+file.Path)
 		}
+	}
+	return lines
+}
+
+func (m Model) sessionDetailLines(session schema.SessionSnapshot, w int) []string {
+	width := max(20, w-6)
+	lines := []string{
+		"session  " + session.ID,
+		fmt.Sprintf("provider %-8s status %s", session.Provider, string(session.Status)),
+		"cwd      " + first(session.CWD, "-"),
+		"model    " + first(session.Model, "-"),
+		fmt.Sprintf("turns    %d", session.Turns),
+		"updated  " + age(session.LastUpdated),
+	}
+	if session.PID > 0 {
+		lines = append(lines, fmt.Sprintf("pid      %d", session.PID))
+	}
+	if session.Tokens != nil {
+		lines = append(lines, fmt.Sprintf("tokens   in %d out %d", session.Tokens.Input, session.Tokens.Output))
+	}
+	if session.Resumable {
+		lines = append(lines, "resume   available")
+	}
+	if session.SourcePath != "" {
+		lines = append(lines, "source   "+session.SourcePath)
+	}
+	if session.LastText != "" {
+		lines = append(lines, "", "LAST MESSAGE")
+		lines = append(lines, wrapText(session.LastText, width)...)
 	}
 	return lines
 }
@@ -898,10 +982,13 @@ func (m Model) rightPanelID() string {
 }
 
 func (m Model) runSubtitle() string {
-	return fmt.Sprintf("%d active / %d total", len(m.activeBatches()), len(m.world.Batches))
+	return fmt.Sprintf("%d active / %d total", m.activeSessions()+len(m.activeBatches()), len(m.world.Sessions)+len(m.world.Batches))
 }
 
 func (m Model) detailSubtitle() string {
+	if session, ok := m.selectedSession(); ok {
+		return fmt.Sprintf("%s %s", string(session.Status), session.Provider)
+	}
 	task, ok := m.selectedTask()
 	if !ok {
 		return "none selected"
@@ -964,7 +1051,7 @@ func (m *Model) end() {
 	case panelDetails:
 		m.detailOffset = len(m.detailLines(80))
 	default:
-		m.selected = len(m.batches()) - 1
+		m.selected = len(m.runRows()) - 1
 		m.taskSelected = 0
 	}
 }
@@ -984,17 +1071,21 @@ func (m *Model) scrollPanel(id string, delta int) {
 
 func (m *Model) clamp() {
 	m.focus = m.normalizedFocus()
-	batches := m.batches()
-	if len(batches) == 0 {
+	rows := m.runRows()
+	if len(rows) == 0 {
 		m.selected = 0
 		m.taskSelected = 0
 	} else {
-		m.selected = clamp(m.selected, 0, len(batches)-1)
-		tasks := m.tasks(batches[m.selected].BatchID)
-		if len(tasks) == 0 {
-			m.taskSelected = 0
+		m.selected = clamp(m.selected, 0, len(rows)-1)
+		if batch, ok := m.selectedBatch(); ok {
+			tasks := m.tasks(batch.BatchID)
+			if len(tasks) == 0 {
+				m.taskSelected = 0
+			} else {
+				m.taskSelected = clamp(m.taskSelected, 0, len(tasks)-1)
+			}
 		} else {
-			m.taskSelected = clamp(m.taskSelected, 0, len(tasks)-1)
+			m.taskSelected = 0
 		}
 	}
 	warnings := m.warnings()
@@ -1170,6 +1261,105 @@ func (m Model) updateShellKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// runRows lists sessions first (busy before idle before done), then batches
+// in their existing priority order. Both honor the inactive toggle and filter.
+func (m Model) runRows() []runRow {
+	rows := make([]runRow, 0, len(m.world.Sessions)+len(m.world.Batches))
+	for _, session := range m.sessions() {
+		rows = append(rows, runRow{kind: rowSession, session: session})
+	}
+	for _, batch := range m.batches() {
+		rows = append(rows, runRow{kind: rowBatch, batch: batch})
+	}
+	return rows
+}
+
+func (m Model) sessions() []schema.SessionSnapshot {
+	out := make([]schema.SessionSnapshot, 0, len(m.world.Sessions))
+	for _, session := range m.world.Sessions {
+		if !m.showInactive && inactiveSession(session) {
+			continue
+		}
+		if !m.sessionMatches(session) {
+			continue
+		}
+		out = append(out, session)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		left, right := sessionPriority(out[i].Status), sessionPriority(out[j].Status)
+		if left != right {
+			return left < right
+		}
+		if !out[i].LastUpdated.Equal(out[j].LastUpdated) {
+			return out[i].LastUpdated.After(out[j].LastUpdated)
+		}
+		return out[i].Provider+out[i].ID < out[j].Provider+out[j].ID
+	})
+	return out
+}
+
+func (m Model) activeSessions() int {
+	count := 0
+	for _, session := range m.world.Sessions {
+		if !inactiveSession(session) {
+			count++
+		}
+	}
+	return count
+}
+
+func (m Model) sessionMatches(session schema.SessionSnapshot) bool {
+	query := m.filterQuery()
+	if query == "" {
+		return true
+	}
+	fields := []string{
+		session.ID,
+		session.Provider,
+		session.Title,
+		session.CWD,
+		session.Model,
+		session.LastText,
+		string(session.Status),
+	}
+	for _, field := range fields {
+		if containsFold(field, query) {
+			return true
+		}
+	}
+	return false
+}
+
+func inactiveSession(session schema.SessionSnapshot) bool {
+	return session.Status == schema.SessionDone
+}
+
+func sessionPriority(status schema.SessionStatus) int {
+	switch status {
+	case schema.SessionBusy:
+		return 0
+	case schema.SessionIdle:
+		return 1
+	case schema.SessionUnknown:
+		return 2
+	default:
+		return 3
+	}
+}
+
+func sessionStatusShort(status schema.SessionStatus) string {
+	switch status {
+	case schema.SessionBusy:
+		return "BUSY"
+	case schema.SessionIdle:
+		return "IDLE"
+	case schema.SessionDone:
+		return "DONE"
+	default:
+		return "?"
+	}
+}
+
 func (m Model) batches() []schema.BatchSnapshot {
 	out := make([]schema.BatchSnapshot, 0, len(m.world.Batches))
 	for _, b := range m.world.Batches {
@@ -1197,13 +1387,29 @@ func (m Model) activeBatches() []schema.BatchSnapshot {
 	return active
 }
 
+func (m Model) selectedRun() (runRow, bool) {
+	rows := m.runRows()
+	if len(rows) == 0 {
+		return runRow{}, false
+	}
+	index := clamp(m.selected, 0, len(rows)-1)
+	return rows[index], true
+}
+
 func (m Model) selectedBatch() (schema.BatchSnapshot, bool) {
-	batches := m.batches()
-	if len(batches) == 0 {
+	row, ok := m.selectedRun()
+	if !ok || row.kind != rowBatch {
 		return schema.BatchSnapshot{}, false
 	}
-	index := clamp(m.selected, 0, len(batches)-1)
-	return batches[index], true
+	return row.batch, true
+}
+
+func (m Model) selectedSession() (schema.SessionSnapshot, bool) {
+	row, ok := m.selectedRun()
+	if !ok || row.kind != rowSession {
+		return schema.SessionSnapshot{}, false
+	}
+	return row.session, true
 }
 
 func (m Model) selectedTask() (schema.TaskSnapshot, bool) {
@@ -1311,10 +1517,24 @@ func containsFold(value, query string) bool {
 }
 
 func (m Model) selectedBatchBorder() lipgloss.Color {
+	if session, ok := m.selectedSession(); ok {
+		return sessionBorder(session.Status)
+	}
 	if batch, ok := m.selectedBatch(); ok {
 		return batchBorder(batch)
 	}
 	return lipgloss.Color("244")
+}
+
+func sessionBorder(status schema.SessionStatus) lipgloss.Color {
+	switch status {
+	case schema.SessionBusy:
+		return lipgloss.Color("82")
+	case schema.SessionIdle:
+		return lipgloss.Color("220")
+	default:
+		return lipgloss.Color("244")
+	}
 }
 
 func (m Model) blockedCount() int {

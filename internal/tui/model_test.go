@@ -277,9 +277,65 @@ func TestWatchModeEmptyStateGuidesUser(t *testing.T) {
 	model.width = 140
 	model.height = 36
 	output := model.View()
-	if !strings.Contains(output, "mode:watch") || !strings.Contains(output, "Start a Claude Code task with") || !strings.Contains(output, "subagents now") {
+	if !strings.Contains(output, "mode:watch") || !strings.Contains(output, "Start an agent session now.") {
 		t.Fatalf("expected watch guidance, got:\n%s", output)
 	}
+}
+
+func TestDashboardRendersSessionsInRunsPanel(t *testing.T) {
+	model := testModelWithSessions()
+	model.width = 140
+	model.height = 36
+	output := model.View()
+	if !strings.Contains(output, "claude") || !strings.Contains(output, "BUSY") {
+		t.Fatalf("expected busy claude session row, got:\n%s", output)
+	}
+	if strings.Contains(output, "old-session") {
+		t.Fatalf("expected done session hidden by default, got:\n%s", output)
+	}
+}
+
+func TestDashboardSessionSelectionShowsDetail(t *testing.T) {
+	model := testModelWithSessions()
+	model.width = 140
+	model.height = 36
+	// Sessions sort before batches, so the first run row is the busy session.
+	model.selected = 0
+	output := model.View()
+	if !strings.Contains(output, "claude-fable-5") || !strings.Contains(output, "Fixing the login page") {
+		t.Fatalf("expected session detail with model and last text, got:\n%s", output)
+	}
+	if !strings.Contains(output, "resume   available") {
+		t.Fatalf("expected resumable marker, got:\n%s", output)
+	}
+}
+
+func TestDashboardFilterMatchesSessions(t *testing.T) {
+	model := testModelWithSessions()
+	model.filter = "login"
+	sessions := model.sessions()
+	if len(sessions) != 1 || sessions[0].ID != "sess-busy" {
+		t.Fatalf("expected filter to match session last text, got %#v", sessions)
+	}
+}
+
+func testModelWithSessions() Model {
+	model := testModel()
+	now := time.Now()
+	model.world.Sessions = map[string]schema.SessionSnapshot{
+		"claude:sess-busy": {
+			ID: "sess-busy", Provider: "claude", Title: "login-fix", CWD: "/tmp/demo",
+			Status: schema.SessionBusy, Model: "claude-fable-5", Turns: 4,
+			LastText: "Fixing the login page now.", Resumable: true,
+			Tokens: &schema.TokenUsage{Input: 100, Output: 20},
+			PID:    4242, LastUpdated: now,
+		},
+		"claude:old-session": {
+			ID: "old-session", Provider: "claude", CWD: "/tmp/old",
+			Status: schema.SessionDone, LastUpdated: now.Add(-24 * time.Hour),
+		},
+	}
+	return model
 }
 
 func testModel() Model {

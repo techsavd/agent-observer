@@ -26,6 +26,7 @@ const (
 
 type options struct {
 	command         command
+	claudeDir       string
 	tasksDir        string
 	teamsDir        string
 	maxFileSize     int64

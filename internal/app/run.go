@@ -69,6 +69,7 @@ func Run(ctx context.Context, args []string) error {
 	defaultTeamsDir := filepath.Join(home, ".claude", "teams")
 	opts := options{
 		command:         commandDashboard,
+		claudeDir:       firstNonEmptyEnv("AGENT_OBSERVER_CLAUDE_DIR"),
 		tasksDir:        firstNonEmptyEnv("AGENT_OBSERVER_TASKS_DIR", "CLAUDE_TASKS_DIR"),
 		teamsDir:        firstNonEmptyEnv("AGENT_OBSERVER_TEAMS_DIR", "CLAUDE_TEAMS_DIR"),
 		maxFileSize:     envInt64("AGENT_OBSERVER_MAX_FILE_SIZE", claude.DefaultMaxFileSize),
@@ -101,6 +102,7 @@ func Run(ctx context.Context, args []string) error {
 		printUsage(fs.Output())
 		fs.PrintDefaults()
 	}
+	fs.StringVar(&opts.claudeDir, "claude-dir", opts.claudeDir, "Claude Code state directory (default ~/.claude)")
 	fs.StringVar(&opts.tasksDir, "tasks-dir", opts.tasksDir, "Claude tasks directory")
 	fs.StringVar(&opts.teamsDir, "teams-dir", opts.teamsDir, "Claude teams directory")
 	fs.Int64Var(&opts.maxFileSize, "max-file-size", opts.maxFileSize, "maximum bytes to read per file")
@@ -157,6 +159,7 @@ func Run(ctx context.Context, args []string) error {
 	)
 	adapters := providers.Build(providers.Config{
 		Claude: claudeprovider.Config{
+			ClaudeDir:   opts.claudeDir,
 			TasksDir:    opts.tasksDir,
 			TeamsDir:    opts.teamsDir,
 			MaxFileSize: opts.maxFileSize,
