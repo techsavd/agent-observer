@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -119,13 +120,15 @@ func TestLauncherFlowLaunchSteerStop(t *testing.T) {
 	if model.confirmStop {
 		t.Fatal("confirmation should close after y")
 	}
+	pid := session.cmd.Process.Pid
 	deadline = time.Now().Add(6 * time.Second)
 	for time.Now().Before(deadline) {
-		if session.cmd.ProcessState != nil {
-			break
+		if syscall.Kill(pid, 0) != nil {
+			return // process fully gone
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	t.Fatal("stopped process still alive")
 }
 
 func TestActionsHiddenWithoutActFlag(t *testing.T) {
