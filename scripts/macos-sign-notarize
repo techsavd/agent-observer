@@ -1,0 +1,36 @@
+#!/usr/bin/env sh
+set -eu
+
+DIST_DIR=${1:-dist}
+
+: "${DEVELOPER_ID_APPLICATION:?set DEVELOPER_ID_APPLICATION to the Developer ID Application identity}"
+: "${APPLE_ID:?set APPLE_ID}"
+: "${APPLE_APP_SPECIFIC_PASSWORD:?set APPLE_APP_SPECIFIC_PASSWORD}"
+: "${APPLE_TEAM_ID:?set APPLE_TEAM_ID}"
+
+if ! command -v codesign >/dev/null 2>&1; then
+	echo "codesign is required on macOS" >&2
+	exit 1
+fi
+if ! command -v xcrun >/dev/null 2>&1; then
+	echo "xcrun is required on macOS" >&2
+	exit 1
+fi
+
+for binary in "$DIST_DIR"/agent-observer_darwin_*/agent-observer; do
+	[ -f "$binary" ] || continue
+	echo "signing $binary"
+	codesign --force --options runtime --timestamp --sign "$DEVELOPER_ID_APPLICATION" "$binary"
+	codesign --verify --strict --verbose=2 "$binary"
+
+	zip_path="$binary.notary.zip"
+	rm -f "$zip_path"
+	ditto -c -k --keepParent "$binary" "$zip_path"
+	echo "submitting $zip_path for notarization"
+	xcrun notarytool submit "$zip_path" \
+		--apple-id "$APPLE_ID" \
+		--password "$APPLE_APP_SPECIFIC_PASSWORD" \
+		--team-id "$APPLE_TEAM_ID" \
+		--wait
+	rm -f "$zip_path"
+done

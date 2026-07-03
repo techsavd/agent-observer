@@ -1,0 +1,164 @@
+.TH AGENT-OBSERVER 1 "July 2026" "agent-observer" "User Commands"
+.SH NAME
+agent-observer \- multi-provider terminal dashboard for local coding agents
+.SH SYNOPSIS
+.B agent-observer
+[\fIflags\fR]
+.br
+.B agent-observer watch
+[\fIflags\fR]
+.br
+.B agent-observer doctor
+[\fIflags\fR]
+.SH DESCRIPTION
+.B agent-observer
+watches the local state of Claude Code, Codex CLI, Cursor, and manifest-defined providers, derives live session and task status, and renders a terminal operations board that reacts to file changes via fsnotify with a polling safety net.
+Observation is read-only toward provider state and never calls model APIs.
+With the opt-in \fB--act\fR flag it can also launch, steer, stop, and resume agent runs by executing your installed provider CLIs in managed PTY panes.
+.SH COMMANDS
+.TP
+.B watch
+Start the live dashboard in watch mode.
+.TP
+.B doctor
+Validate configuration and print a support report.
+.SH FLAGS
+.TP
+.B --providers
+Comma-separated providers to enable: claude, codex, cursor, plugins. Defaults to all.
+.TP
+.B --claude-dir
+Claude Code state directory. Defaults to ~/.claude.
+.TP
+.B --codex-dir
+Codex CLI state directory. Defaults to ~/.codex.
+.TP
+.B --cursor-dir
+Cursor state directory. Defaults to ~/.cursor.
+.TP
+.B --plugins-dir
+Provider manifest directory. Defaults to ~/.config/agent-observer/providers.
+.TP
+.B --poll-interval
+Safety-net rescan interval behind filesystem watching. Defaults to 5s.
+.TP
+.B --no-watch
+Disable filesystem watching and rely on polling only.
+.TP
+.B --act
+Enable agent actions: launch (n), resume (R), steer, and stop (x) runs via provider CLIs. Disabled by default.
+.TP
+.B --no-act
+Disable agent actions.
+.TP
+.B --tasks-dir
+Claude tasks directory. Defaults to ~/.claude/tasks.
+.TP
+.B --teams-dir
+Claude teams directory. Defaults to ~/.claude/teams.
+.TP
+.B --max-file-size
+Maximum bytes to read per file.
+.TP
+.B --refresh-interval
+TUI refresh interval. Must be between 200ms and 1m.
+.TP
+.B --dump-json
+Dump snapshot JSON and exit.
+.TP
+.B --dump-text
+Dump snapshot text and exit.
+.TP
+.B --diagnostics
+Dump diagnostics JSON and exit.
+.TP
+.B --focus
+Text dump focus: all, active, blocked, or warnings.
+.TP
+.B --redact
+Redact local paths in dump, diagnostics, and doctor output.
+.TP
+.B --shell
+Enable the local shell pane. The shell pane is disabled by default.
+.TP
+.B --no-shell
+Disable the local shell pane. Kept as a compatibility alias for restricted environments.
+.TP
+.B --log-file
+Append structured logs to this file.
+.TP
+.B --log-level
+Log level: debug, info, warn, or error.
+.TP
+.B --telemetry
+Telemetry mode: off or on. Defaults to off.
+.TP
+.B --telemetry-endpoint
+HTTP endpoint for opt-in telemetry events.
+.TP
+.B --version
+Print version metadata and exit.
+.SH FILES
+.TP
+.B ~/.config/agent-observer/config.toml
+Optional configuration file. Flags override environment variables, which override this file.
+.TP
+.B ~/.config/agent-observer/providers/*.toml
+Provider manifests: watch globs, session extraction hints, and argv command templates. Trusted local configuration.
+.SH ENVIRONMENT
+.TP
+.B AGENT_OBSERVER_PROVIDERS
+Default provider selection.
+.TP
+.B AGENT_OBSERVER_CLAUDE_DIR, AGENT_OBSERVER_CODEX_DIR, AGENT_OBSERVER_CURSOR_DIR, AGENT_OBSERVER_PLUGINS_DIR
+Default provider state directories.
+.TP
+.B AGENT_OBSERVER_POLL_INTERVAL
+Default safety-net rescan interval.
+.TP
+.B AGENT_OBSERVER_NO_WATCH
+Disable filesystem watching when set to a true value.
+.TP
+.B AGENT_OBSERVER_ACT, AGENT_OBSERVER_NO_ACT
+Enable or disable agent actions when set to a true value.
+.TP
+.B AGENT_OBSERVER_CONFIG
+Alternate path for the configuration file.
+.TP
+.B AGENT_OBSERVER_TASKS_DIR
+Default tasks directory.
+.TP
+.B AGENT_OBSERVER_TEAMS_DIR
+Default teams directory.
+.TP
+.B AGENT_OBSERVER_MAX_FILE_SIZE
+Default maximum file size.
+.TP
+.B AGENT_OBSERVER_REFRESH_INTERVAL
+Default refresh interval.
+.TP
+.B AGENT_OBSERVER_SHELL
+Enable the local shell pane when set to a true value.
+.TP
+.B AGENT_OBSERVER_NO_SHELL
+Disable the local shell pane when set to a true value.
+.TP
+.B AGENT_OBSERVER_REDACT
+Redact support output when set to a true value.
+.TP
+.B AGENT_OBSERVER_LOG_FILE
+Default log file.
+.TP
+.B AGENT_OBSERVER_LOG_LEVEL
+Default log level.
+.TP
+.B AGENT_OBSERVER_TELEMETRY
+Telemetry mode: off or on.
+.TP
+.B AGENT_OBSERVER_TELEMETRY_ENDPOINT
+HTTP endpoint for opt-in telemetry events.
+.SH SECURITY
+Session snapshots and diagnostics may include local paths, prompts, message excerpts, warnings, and timing metadata.
+Use --redact before sharing output.
+Agent actions are disabled by default; with --act the dashboard executes provider CLIs as the invoking user and always displays the exact command line.
+Telemetry is disabled by default and must not include task titles, prompts, session text, local paths, active file paths, raw warnings, shell transcript, or dump payloads.

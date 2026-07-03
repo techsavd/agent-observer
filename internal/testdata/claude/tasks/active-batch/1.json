@@ -1,0 +1,5 @@
+{
+  "title": "Implement dashboard cockpit",
+  "description": "Running implementation in internal/tui/model.go and internal/claude/scan.go",
+  "status": "running"
+}

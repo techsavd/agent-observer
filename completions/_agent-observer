@@ -1,0 +1,31 @@
+#compdef agent-observer
+
+_arguments -C \
+  '1:command:(watch doctor)' \
+  '--providers[comma-separated providers]:providers:(claude codex cursor plugins)' \
+  '--claude-dir[Claude Code state directory]:directory:_files -/' \
+  '--codex-dir[Codex CLI state directory]:directory:_files -/' \
+  '--cursor-dir[Cursor state directory]:directory:_files -/' \
+  '--plugins-dir[provider manifest directory]:directory:_files -/' \
+  '--tasks-dir[Claude tasks directory]:directory:_files -/' \
+  '--teams-dir[Claude teams directory]:directory:_files -/' \
+  '--max-file-size[maximum bytes to read per file]:bytes:' \
+  '--refresh-interval[legacy scan interval]:duration:' \
+  '--poll-interval[safety-net rescan interval]:duration:' \
+  '--no-watch[disable filesystem watching]' \
+  '--act[enable agent actions]' \
+  '--no-act[disable agent actions]' \
+  '--debug[show debug UI]' \
+  '--dump-json[dump snapshot JSON and exit]' \
+  '--dump-text[dump snapshot text and exit]' \
+  '--diagnostics[dump diagnostics JSON and exit]' \
+  '--version[print version and exit]' \
+  '--shell[enable the local shell pane]' \
+  '--no-shell[disable the local shell pane]' \
+  '--redact[redact local paths in support output]' \
+  '--log-file[append structured logs to this file]:file:_files' \
+  '--log-level[log level]:level:(debug info warn error)' \
+  '--telemetry[telemetry mode]:mode:(off on)' \
+  '--telemetry-endpoint[telemetry endpoint URL]:url:' \
+  '--focus[dump text focus]:focus:(all active blocked warnings)' \
+  '--help[show help]'
