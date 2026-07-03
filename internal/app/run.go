@@ -44,6 +44,7 @@ type runConfig struct {
 	WatchMode                   bool   `json:"watch_mode"`
 	Shell                       bool   `json:"shell"`
 	ShellEnabled                bool   `json:"shell_enabled"`
+	ActEnabled                  bool   `json:"act_enabled"`
 	Redact                      bool   `json:"redact"`
 	LogFile                     string `json:"log_file,omitempty"`
 	LogLevel                    string `json:"log_level"`
@@ -85,6 +86,8 @@ func Run(ctx context.Context, args []string) error {
 		noWatch:         envBool("AGENT_OBSERVER_NO_WATCH", false),
 		shell:           envBool("AGENT_OBSERVER_SHELL", false),
 		noShell:         envBool("AGENT_OBSERVER_NO_SHELL", false),
+		act:             envBool("AGENT_OBSERVER_ACT", false),
+		noAct:           envBool("AGENT_OBSERVER_NO_ACT", false),
 		redact:          envBool("AGENT_OBSERVER_REDACT", false),
 		focus:           "all",
 		logFile:         firstNonEmptyEnv("AGENT_OBSERVER_LOG_FILE"),
@@ -129,6 +132,8 @@ func Run(ctx context.Context, args []string) error {
 	fs.BoolVar(&opts.showVersion, "version", false, "print version and exit")
 	fs.BoolVar(&opts.shell, "shell", opts.shell, "enable the local shell pane")
 	fs.BoolVar(&opts.noShell, "no-shell", opts.noShell, "disable the local shell pane")
+	fs.BoolVar(&opts.act, "act", opts.act, "enable launching, steering, stopping, and resuming agent runs via provider CLIs")
+	fs.BoolVar(&opts.noAct, "no-act", opts.noAct, "disable agent actions")
 	fs.BoolVar(&opts.redact, "redact", opts.redact, "redact local paths in dump, diagnostics, and doctor output")
 	fs.StringVar(&opts.logFile, "log-file", opts.logFile, "append structured logs to this file")
 	fs.StringVar(&opts.logLevel, "log-level", opts.logLevel, "log level: debug, info, warn, error")
@@ -217,6 +222,7 @@ func Run(ctx context.Context, args []string) error {
 		WatchMode:                   opts.command == commandWatch,
 		Shell:                       shellEnabled(opts),
 		ShellEnabled:                shellEnabled(opts),
+		ActEnabled:                  actEnabled(opts),
 		Redact:                      opts.redact,
 		LogFile:                     opts.logFile,
 		LogLevel:                    opts.logLevel,
@@ -263,10 +269,20 @@ func Run(ctx context.Context, args []string) error {
 	if opts.command == commandWatch {
 		model = tui.NewWatch(world, opts.debug, refresh)
 	}
+	var actors []tui.ActionProvider
+	if actEnabled(opts) {
+		for _, adapter := range adapters {
+			if actor, ok := adapter.(source.Actor); ok && actor.CanAct() {
+				actors = append(actors, tui.ActionProvider{Name: adapter.Name(), Actor: actor})
+			}
+		}
+		logger.Info("agent actions enabled", slog.Int("actionable_providers", len(actors)))
+	}
 	model = model.
 		WithRefreshInterval(opts.refreshInterval).
 		WithRefreshRequester(scanEngine.RequestRefresh).
-		WithShellEnabled(shellEnabled(opts))
+		WithShellEnabled(shellEnabled(opts)).
+		WithActions(actors, actEnabled(opts))
 	engineCtx, stopEngine := context.WithCancel(ctx)
 	defer stopEngine()
 	program := tea.NewProgram(model, tea.WithContext(ctx), tea.WithAltScreen(), tea.WithMouseCellMotion())

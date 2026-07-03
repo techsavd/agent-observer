@@ -47,6 +47,8 @@ type options struct {
 	noShell         bool
 	shellFlagSeen   bool
 	noShellFlagSeen bool
+	act             bool
+	noAct           bool
 	redact          bool
 	focus           string
 	logFile         string
@@ -179,4 +181,11 @@ func shellEnabled(opts options) bool {
 		return false
 	}
 	return opts.shell
+}
+
+func actEnabled(opts options) bool {
+	if opts.noAct {
+		return false
+	}
+	return opts.act
 }

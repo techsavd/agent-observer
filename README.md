@@ -1,15 +1,37 @@
 # Agent Observer
 
-Terminal-first dashboard for watching local Claude Code shared state. Agent Observer is read-only toward Claude: it watches files, parses local JSON/state, derives batch/task status, and renders a live operations board.
+Terminal-first, multi-provider dashboard for local coding agents. Agent Observer watches the on-disk state that Claude Code, Codex CLI, and Cursor leave behind, derives live session and task status, and renders an operations board that reacts to file changes in under 100ms (fsnotify with a polling safety net).
 
-It does not call the Claude API and does not control Claude agents.
+Observation never calls model APIs and is read-only toward provider state. With the opt-in `--act` flag, the dashboard can also launch, steer, stop, and resume agent runs by spawning your installed provider CLIs in managed PTY panes — powered by whatever subscriptions those CLIs already hold. No API keys.
 
-## Data Sources
+## Providers And Data Sources
 
-- `~/.claude/tasks`
-- `~/.claude/teams` optional
+Built-in providers (auto-detected; select with `--providers`):
 
-When `teams` is missing, Agent Observer runs in task-batch fallback mode.
+- `claude`: `~/.claude/tasks`, `~/.claude/teams` (optional), `~/.claude/sessions` (live busy/idle status per process), `~/.claude/projects` (session transcripts: model, turns, last message, token usage)
+- `codex`: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (events, model, tokens), `~/.codex/session_index.jsonl` (thread titles)
+- `cursor`: `~/.cursor/projects/*/agent-transcripts` (recency-based status)
+
+Anything else plugs in declaratively — drop a manifest into `~/.config/agent-observer/providers/`:
+
+```toml
+name = "aider"
+
+[watch]
+globs = ["~/.aider/history/*.jsonl"]
+
+[session]
+id = "filename_stem"                 # or dir_name, or field:<dotted.path>
+cwd = "field:cwd"
+text = "field:message.content.text"
+status = { mode = "recency", busy_within = "30s", idle_within = "10m" }
+
+[commands]                            # used only with --act; argv arrays, never shell strings
+launch = ["aider", "--message", "{prompt}"]
+resume = ["aider", "--resume", "{session_id}"]
+```
+
+Large transcripts are tailed incrementally (byte offsets, rotation-safe), so scans stay cheap no matter how much history exists.
 
 ## Quickstart
 
@@ -77,9 +99,16 @@ Run from any project:
 - `s`: open/focus `shell://local` when started with `--shell`
 - `ctrl+o`: detach keyboard focus from shell back to dashboard
 - `ctrl+d`: exit shell when shell is focused
-- `r`: refresh
+- `r`: refresh (pokes the scan engine; scans normally arrive via file events)
 - `?`: help
 - `q`: quit from dashboard focus
+
+Agent actions, only with `--act`:
+
+- `n`: launch a new agent run (provider picker, prompt, working directory)
+- `R`: resume the selected observed session in its own cwd
+- `x`: stop the active managed run (confirmation, then SIGTERM → SIGKILL)
+- `[` / `]`: cycle between managed PTY panes
 
 Mouse support:
 
@@ -122,12 +151,18 @@ agent-observer watch --shell
 
 CLI flags override environment variables. Useful environment variables:
 
+- `AGENT_OBSERVER_PROVIDERS` (comma-separated: claude, codex, cursor, plugins)
+- `AGENT_OBSERVER_CLAUDE_DIR` / `AGENT_OBSERVER_CODEX_DIR` / `AGENT_OBSERVER_CURSOR_DIR`
+- `AGENT_OBSERVER_PLUGINS_DIR`
 - `AGENT_OBSERVER_TASKS_DIR`
 - `AGENT_OBSERVER_TEAMS_DIR`
 - `AGENT_OBSERVER_MAX_FILE_SIZE`
+- `AGENT_OBSERVER_POLL_INTERVAL` (safety-net rescan behind file watching, default 5s)
+- `AGENT_OBSERVER_NO_WATCH` (disable fsnotify; poll only)
 - `AGENT_OBSERVER_REFRESH_INTERVAL`
 - `AGENT_OBSERVER_SHELL`
 - `AGENT_OBSERVER_NO_SHELL`
+- `AGENT_OBSERVER_ACT` / `AGENT_OBSERVER_NO_ACT`
 - `AGENT_OBSERVER_REDACT`
 - `AGENT_OBSERVER_LOG_FILE`
 - `AGENT_OBSERVER_LOG_LEVEL`
@@ -170,13 +205,18 @@ make doctor-fixture
 
 Stable reusable core for future Techsav reuse:
 
-- `core/schema`: portable snapshot and event vocabulary.
-- `core/source`: source adapter boundary and record model.
-- `core/store`: derived in-memory state/store concept.
+- `core/schema`: portable snapshot and event vocabulary (schema v2: sessions + providers).
+- `core/source`: provider adapter and actor boundaries.
+- `core/store`: thread-safe latest-world snapshot store.
+- `core/aggregate`: merges per-provider snapshots (session keys namespaced `provider:id`).
+- `core/tail`: incremental JSONL tailer (byte offsets, rotation/truncation-safe, cold-start windowing).
+- `core/watch`: fsnotify dir watches + bounded hot-file LRU + debounced per-provider dirty sets.
 - Snapshot JSON includes `schema_version` so downstream consumers can detect contract changes.
 
-Claude-specific local adapters:
+Provider adapters and scheduling:
 
+- `internal/providers/{claude,codex,cursor,manifest}`: source adapters (+ actors for launch/resume).
+- `internal/engine`: scan scheduling — watch events, safety poll, manual refresh; dirty-only rescans.
 - `internal/claude`: schema-aware task-batch scanner and normalizer.
 - Handles `~/.claude/tasks/<batch-id>/<n>.json`.
 - Handles `.lock` as batch liveness metadata.
@@ -225,13 +265,28 @@ Release and schema docs:
 - [docs/MACOS_SIGNING.md](docs/MACOS_SIGNING.md)
 - [SECURITY.md](SECURITY.md)
 
+## Agent Actions
+
+Actions are disabled by default; enable with:
+
+```bash
+agent-observer watch --act
+```
+
+- Launch (`n`), resume (`R`), and steer runs interactively inside managed PTY panes; stop (`x`) with confirmation.
+- The exact command line is always displayed in the pane before and while it runs.
+- Commands execute your installed provider CLIs (`claude`, `codex`, `cursor-agent`, manifest `[commands]`) as your user — your existing CLI auth/subscriptions power them. Agent Observer stores no credentials.
+- Argv is executed directly, never via a shell; manifest placeholders substitute inside single argv elements, so prompt text cannot inject commands.
+- Up to 4 concurrent panes; exited panes keep their buffer and are evicted first.
+
 ## Security And Privacy
 
-- Agent Observer is read-only toward Claude local state.
-- Task snapshots and diagnostics may include local paths, prompts, warnings, and timing metadata.
+- Observation is read-only toward provider local state; no model APIs are called.
+- Session snapshots and diagnostics may include local paths, prompts, message excerpts, warnings, and timing metadata.
 - Do not publish `--dump-json`, `--diagnostics`, or `doctor` output without reviewing it for sensitive local context.
 - Use `--redact` before sharing support output.
 - The local shell pane is disabled by default; use `--shell` only when a local PTY is appropriate.
+- Agent actions are disabled by default; `--act` is an explicit opt-in and `doctor` reports when it is on. See [SECURITY.md](SECURITY.md).
 - Telemetry is disabled by default and only sends aggregate event metadata when explicitly enabled.
 
 ## Current Limits

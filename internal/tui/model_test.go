@@ -39,11 +39,15 @@ func TestDashboardRendersShellPane(t *testing.T) {
 	model.width = 140
 	model.height = 36
 	model.focus = "shell"
-	model.shell = &shellSession{
-		cwd:    "/tmp/project",
-		shell:  "/bin/sh",
-		screen: newScreen(40, 12),
-		raw:    []string{"$ pwd", "/tmp/project"},
+	if err := model.runs.add(&ptySession{
+		id:       "run-1",
+		provider: providerShell,
+		argv:     []string{"/bin/sh"},
+		cwd:      "/tmp/project",
+		screen:   newScreen(40, 12),
+		raw:      []string{"$ pwd", "/tmp/project"},
+	}); err != nil {
+		t.Fatal(err)
 	}
 	output := model.View()
 	if !strings.Contains(output, "shell://local") || !strings.Contains(output, "/tmp/project") {
@@ -238,11 +242,15 @@ func TestDashboardMouseFocusesVisibleShell(t *testing.T) {
 	model := testModel().WithShellEnabled(true)
 	model.width = 140
 	model.height = 36
-	model.shell = &shellSession{
-		cwd:    "/tmp/project",
-		shell:  "/bin/sh",
-		screen: newScreen(40, 12),
-		raw:    []string{"$ pwd", "/tmp/project"},
+	if err := model.runs.add(&ptySession{
+		id:       "run-1",
+		provider: providerShell,
+		argv:     []string{"/bin/sh"},
+		cwd:      "/tmp/project",
+		screen:   newScreen(40, 12),
+		raw:      []string{"$ pwd", "/tmp/project"},
+	}); err != nil {
+		t.Fatal(err)
 	}
 	model.focus = panelRuns
 	layout := model.dashboardLayout()

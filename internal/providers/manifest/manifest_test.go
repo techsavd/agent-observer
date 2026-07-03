@@ -9,7 +9,12 @@ import (
 	"time"
 
 	"github.com/techsavd/agent-observer/core/schema"
+	"github.com/techsavd/agent-observer/core/source"
 )
+
+func sourceLaunch(prompt string) source.LaunchRequest {
+	return source.LaunchRequest{Prompt: prompt, CWD: "/tmp"}
+}
 
 func TestLoadParsesValidAndReportsInvalid(t *testing.T) {
 	manifests, errs := Load(filepath.Join("..", "..", "testdata", "manifests"))
@@ -52,6 +57,25 @@ func TestExtractField(t *testing.T) {
 	}
 	if got := extractField(value, "missing.path"); got != "" {
 		t.Fatalf("missing = %q", got)
+	}
+}
+
+func TestSubstituteArgvIsInjectionSafe(t *testing.T) {
+	adapter := NewAdapter(Manifest{
+		Name:     "aider",
+		Watch:    WatchConfig{Globs: []string{"/tmp/x/*.jsonl"}},
+		Commands: CommandsConfig{Launch: []string{"aider", "--message", "{prompt}"}},
+	})
+	hostile := `"; rm -rf / #`
+	argv, err := adapter.LaunchArgv(sourceLaunch(hostile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(argv) != 3 {
+		t.Fatalf("argv length changed: %v", argv)
+	}
+	if argv[2] != hostile {
+		t.Fatalf("hostile prompt must stay one literal argv element, got %q", argv[2])
 	}
 }
 

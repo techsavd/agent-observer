@@ -51,9 +51,15 @@ type Model struct {
 	watchMode       bool
 
 	allowShell    bool
-	shell         *shellSession
 	shellStarting bool
 	shellError    error
+
+	allowAct    bool
+	actors      []ActionProvider
+	runs        *sessionManager
+	launcher    launcherState
+	confirmStop bool
+	actionError string
 }
 
 type refreshMsg schema.WorldSnapshot
@@ -119,7 +125,19 @@ func New(world schema.WorldSnapshot, debug bool, refresh func(context.Context) s
 		refreshEvery: time.Second,
 		focus:        panelRuns,
 		debug:        debug,
+		runs:         newSessionManager(),
 	}
+}
+
+// WithActions enables launch/steer/stop/resume through the given providers.
+// Nothing is executed unless the user triggers it; the exact argv is always
+// shown in the pane.
+func (m Model) WithActions(actors []ActionProvider, enabled bool) Model {
+	m.allowAct = enabled && len(actors) > 0
+	if m.allowAct {
+		m.actors = actors
+	}
+	return m
 }
 
 func NewWatch(world schema.WorldSnapshot, debug bool, refresh func(context.Context) schema.WorldSnapshot) Model {
@@ -145,11 +163,12 @@ func (m Model) WithRefreshRequester(request func()) Model {
 
 func (m Model) WithShellEnabled(enabled bool) Model {
 	m.allowShell = enabled
-	if !enabled && m.shell != nil {
-		m.shell.close()
-		m.shell = nil
+	if !enabled {
+		if shell := m.runs.byProvider(providerShell); shell != nil {
+			m.runs.remove(shell.id)
+		}
 		m.shellStarting = false
-		if m.focus == panelShell {
+		if m.focus == panelShell && m.runs.count() == 0 {
 			m.focus = panelTasks
 		}
 	}
@@ -188,6 +207,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clamp()
 		return m, cmd
 	case tea.KeyMsg:
+		if m.launcher.open {
+			cmd := m.updateLauncherKey(msg)
+			return m, cmd
+		}
+		if m.confirmStop {
+			return m.updateConfirmStopKey(msg), nil
+		}
 		if m.focus == panelShell && !m.filtering {
 			return m.updateShellKey(msg)
 		}
@@ -207,38 +233,54 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case uiTickMsg:
 		return m, uiTick()
-	case shellStartedMsg:
+	case ptyStartedMsg:
 		m.shellStarting = false
 		if msg.err != nil {
 			m.shellError = msg.err
 			return m, nil
 		}
-		m.shell = msg.session
+		if err := m.runs.add(msg.session); err != nil {
+			msg.session.close()
+			m.actionError = err.Error()
+			return m, nil
+		}
 		m.shellError = nil
 		m.focus = panelShell
 		m.resizeShell()
-		return m, readShell(m.shell)
-	case shellOutputMsg:
-		if m.shell == nil {
+		return m, readPTY(msg.session)
+	case ptyOutputMsg:
+		session := m.runs.get(msg.id)
+		if session == nil {
 			return m, nil
 		}
 		if msg.text != "" {
-			m.shell.write(msg.text)
-			return m, readShell(m.shell)
+			session.write(msg.text)
+			return m, readPTY(session)
 		}
 		if msg.err != nil {
-			m.shell.markClosed(msg.err)
+			session.markClosed(msg.err)
 		}
 	}
 	return m, nil
 }
 
+func (m Model) updateConfirmStopKey(msg tea.KeyMsg) Model {
+	switch msg.String() {
+	case "y", "Y":
+		if session := m.runs.activeSession(); session != nil {
+			session.stop()
+		}
+		m.confirmStop = false
+	case "n", "N", "esc", "q":
+		m.confirmStop = false
+	}
+	return m
+}
+
 func (m *Model) updateDashboardKey(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "q", "ctrl+c":
-		if m.shell != nil {
-			m.shell.close()
-		}
+		m.runs.closeAll()
 		return tea.Quit
 	case "esc":
 		if m.showHelp {
@@ -297,6 +339,18 @@ func (m *Model) updateDashboardKey(msg tea.KeyMsg) tea.Cmd {
 		m.end()
 	case "s":
 		return m.openShell()
+	case "n":
+		m.openLauncher()
+	case "R":
+		return m.resumeSelected()
+	case "x":
+		if m.allowAct && m.runs.activeSession() != nil && !m.runs.activeSession().closed {
+			m.confirmStop = true
+		}
+	case "[":
+		m.runs.cycle(-1)
+	case "]":
+		m.runs.cycle(1)
 	case "r":
 		return m.refreshCmd()
 	}
@@ -306,9 +360,7 @@ func (m *Model) updateDashboardKey(msg tea.KeyMsg) tea.Cmd {
 func (m *Model) updateFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
-		if m.shell != nil {
-			m.shell.close()
-		}
+		m.runs.closeAll()
 		return *m, tea.Quit
 	case "esc":
 		m.filter = ""
@@ -440,6 +492,12 @@ func (m Model) View() string {
 	if m.showHelp {
 		out += "\n" + m.helpOverlay()
 	}
+	if m.launcher.open {
+		out += "\n" + m.launcherOverlay()
+	}
+	if m.confirmStop {
+		out += "\n" + m.confirmStopOverlay()
+	}
 	return out
 }
 
@@ -568,22 +626,46 @@ func (m Model) rightPane(id string, w, h int) string {
 }
 
 func (m Model) shellPane(w, h int) string {
-	lines := []string{"local PTY only; not Claude control", "ctrl+o dashboard  ctrl+d exit"}
-	subtitle := "open with s"
-	if m.shellStarting {
-		lines = append(lines, "starting shell...")
-	} else if m.shellError != nil {
+	session := m.runs.activeSession()
+	title := "4 Runs"
+	subtitle := ""
+	var lines []string
+	switch {
+	case m.shellStarting:
+		lines = append(lines, "starting...")
+	case m.shellError != nil:
 		lines = append(lines, "error: "+m.shellError.Error())
-	} else if m.shell != nil {
-		subtitle = trunc(m.shell.cwd, max(12, w-4))
-		if m.debug {
-			lines = append(lines, fmt.Sprintf("debug raw=%d partial=%q", len(m.shell.raw), trunc(m.shell.partial, 16)))
+	case session == nil:
+		lines = append(lines, "no managed runs")
+		if m.allowShell {
+			lines = append(lines, "s opens shell://local")
 		}
-		lines = append(lines, m.shell.lines(max(1, h-5))...)
+		if m.allowAct {
+			lines = append(lines, "n launches an agent run")
+		}
+	default:
+		if session.provider == providerShell {
+			title = "4 Local Shell"
+			subtitle = "shell://local " + trunc(session.cwd, max(12, w-20))
+		} else {
+			title = "4 Run"
+			subtitle = fmt.Sprintf("%s %s", session.provider, session.stateLabel())
+		}
+		if position := m.runs.position(); m.runs.count() > 1 {
+			subtitle += " " + position + " [ ] cycle"
+		}
+		lines = append(lines, "$ "+trunc(strings.Join(session.argv, " "), max(20, w-8)))
+		if m.debug {
+			lines = append(lines, fmt.Sprintf("debug raw=%d partial=%q", len(session.raw), trunc(session.partial, 16)))
+		}
+		lines = append(lines, session.lines(max(1, h-6))...)
+	}
+	if m.actionError != "" {
+		lines = append(lines, "action error: "+m.actionError)
 	}
 	return renderPanel(panelRender{
-		title:    "4 Local Shell",
-		subtitle: "shell://local " + subtitle,
+		title:    title,
+		subtitle: subtitle,
 		lines:    lines,
 		w:        w,
 		h:        h,
@@ -896,6 +978,16 @@ func (m Model) footerTextAndActions() (string, []footerAction) {
 			kind  string
 		}{label: detachLabel, kind: ""})
 	}
+	if m.allowAct {
+		actLabel := "n new  R resume  x stop"
+		if compact {
+			actLabel = "n/R/x"
+		}
+		parts = append(parts, struct {
+			label string
+			kind  string
+		}{label: actLabel, kind: ""})
+	}
 	quitLabel := "q quit"
 	if compact {
 		quitLabel = "q"
@@ -931,6 +1023,9 @@ func (m Model) helpOverlay() string {
 	}
 	if m.allowShell {
 		lines = append(lines, "Shell: s opens local shell://local; ctrl+o returns to dashboard; ctrl+d exits shell.")
+	}
+	if m.allowAct {
+		lines = append(lines, "Actions: n launches a run, R resumes the selected session, x stops the active pane, [ ] cycle panes.")
 	}
 	w, _ := m.size()
 	return boxWithTheme("Help", lines, clamp(w-4, 60, 100), 9, true, lipgloss.Color("86"), lipgloss.Color("235"))
@@ -1029,7 +1124,7 @@ func (m Model) detailSubtitle() string {
 }
 
 func (m Model) shellVisible() bool {
-	return m.shell != nil || m.shellStarting || m.shellError != nil
+	return m.runs.count() > 0 || m.shellStarting || m.shellError != nil || m.allowAct
 }
 
 func (m *Model) move(delta int) {
@@ -1234,15 +1329,20 @@ func (m *Model) openShell() tea.Cmd {
 	if !m.allowShell {
 		return nil
 	}
-	if m.shell != nil && !m.shell.closed {
+	if shell := m.runs.byProvider(providerShell); shell != nil {
 		m.focus = panelShell
+		for i, id := range m.runs.order {
+			if id == shell.id {
+				m.runs.active = i
+			}
+		}
 		return nil
 	}
 	m.shellStarting = true
 	m.shellError = nil
 	m.focus = panelShell
 	cols, rows := m.shellSize()
-	return startShell(m.shellCWD(), cols, rows)
+	return startShell(m.runs.newID(), m.shellCWD(), cols, rows)
 }
 
 func (m Model) refreshCmd() tea.Cmd {
@@ -1276,22 +1376,27 @@ func (m Model) shellSize() (int, int) {
 }
 
 func (m Model) resizeShell() {
-	if m.shell != nil {
-		c, r := m.shellSize()
-		m.shell.resize(c, r)
+	c, r := m.shellSize()
+	for _, id := range m.runs.order {
+		m.runs.get(id).resize(c, r)
 	}
 }
 
 func (m Model) updateShellKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.String() == "ctrl+o" {
+	switch msg.String() {
+	case "ctrl+o":
+		m.focus = panelTasks
+		return m, nil
+	case "ctrl+]":
+		m.runs.cycle(1)
+		return m, nil
+	}
+	session := m.runs.activeSession()
+	if session == nil || session.closed {
 		m.focus = panelTasks
 		return m, nil
 	}
-	if m.shell == nil || m.shell.closed {
-		m.focus = panelTasks
-		return m, nil
-	}
-	if err := m.shell.writeKey(msg); err != nil {
+	if err := session.writeKey(msg); err != nil {
 		m.shellError = err
 	}
 	return m, nil

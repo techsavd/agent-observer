@@ -38,6 +38,13 @@ func buildDoctorReport(config runConfig, world schema.WorldSnapshot) doctorRepor
 		valueCheck("scan", true, fmt.Sprintf("completed with %d warnings", len(world.Warnings))),
 	}
 	checks = append(checks, providerChecks(world)...)
+	if config.ActEnabled {
+		checks = append(checks, doctorCheck{
+			Name:    "act",
+			OK:      true,
+			Message: "agent actions ENABLED: the dashboard can execute provider CLIs listed above as this user",
+		})
+	}
 	return doctorReport{
 		Version:       VersionString(),
 		SchemaVersion: schema.CurrentSchemaVersion,
