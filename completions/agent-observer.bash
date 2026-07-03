@@ -4,7 +4,7 @@ _agent_observer()
 	_init_completion || return
 
 	local commands="watch doctor"
-	local flags="--tasks-dir --teams-dir --max-file-size --refresh-interval --debug --dump-json --dump-text --diagnostics --version --shell --no-shell --redact --log-file --log-level --telemetry --telemetry-endpoint --focus --help"
+	local flags="--providers --claude-dir --codex-dir --cursor-dir --plugins-dir --tasks-dir --teams-dir --max-file-size --refresh-interval --poll-interval --no-watch --debug --dump-json --dump-text --diagnostics --version --shell --no-shell --act --no-act --redact --log-file --log-level --telemetry --telemetry-endpoint --focus --help"
 
 	case "$prev" in
 		--log-level)
@@ -19,7 +19,11 @@ _agent_observer()
 			COMPREPLY=($(compgen -W "off on" -- "$cur"))
 			return
 			;;
-		--tasks-dir|--teams-dir|--log-file)
+		--providers)
+			COMPREPLY=($(compgen -W "claude codex cursor plugins" -- "$cur"))
+			return
+			;;
+		--tasks-dir|--teams-dir|--claude-dir|--codex-dir|--cursor-dir|--plugins-dir|--log-file)
 			_filedir
 			return
 			;;

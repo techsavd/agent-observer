@@ -60,6 +60,8 @@ type Model struct {
 	launcher    launcherState
 	confirmStop bool
 	actionError string
+	// actionHook observes user-triggered actions (telemetry/logging).
+	actionHook func(action, provider string)
 }
 
 type refreshMsg schema.WorldSnapshot
@@ -138,6 +140,18 @@ func (m Model) WithActions(actors []ActionProvider, enabled bool) Model {
 		m.actors = actors
 	}
 	return m
+}
+
+// WithActionHook registers an observer for user-triggered actions.
+func (m Model) WithActionHook(hook func(action, provider string)) Model {
+	m.actionHook = hook
+	return m
+}
+
+func (m Model) trackAction(action, provider string) {
+	if m.actionHook != nil {
+		m.actionHook(action, provider)
+	}
 }
 
 func NewWatch(world schema.WorldSnapshot, debug bool, refresh func(context.Context) schema.WorldSnapshot) Model {
@@ -269,6 +283,7 @@ func (m Model) updateConfirmStopKey(msg tea.KeyMsg) Model {
 	case "y", "Y":
 		if session := m.runs.activeSession(); session != nil {
 			session.stop()
+			m.trackAction("stop", session.provider)
 		}
 		m.confirmStop = false
 	case "n", "N", "esc", "q":

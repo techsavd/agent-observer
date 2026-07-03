@@ -57,6 +57,13 @@ type options struct {
 	telemetryURL    string
 }
 
+func firstNonEmpty2(primary, fallback string) string {
+	if strings.TrimSpace(primary) != "" {
+		return primary
+	}
+	return fallback
+}
+
 func firstNonEmptyEnv(keys ...string) string {
 	for _, key := range keys {
 		if value := strings.TrimSpace(os.Getenv(key)); value != "" {

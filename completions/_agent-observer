@@ -2,10 +2,19 @@
 
 _arguments -C \
   '1:command:(watch doctor)' \
+  '--providers[comma-separated providers]:providers:(claude codex cursor plugins)' \
+  '--claude-dir[Claude Code state directory]:directory:_files -/' \
+  '--codex-dir[Codex CLI state directory]:directory:_files -/' \
+  '--cursor-dir[Cursor state directory]:directory:_files -/' \
+  '--plugins-dir[provider manifest directory]:directory:_files -/' \
   '--tasks-dir[Claude tasks directory]:directory:_files -/' \
   '--teams-dir[Claude teams directory]:directory:_files -/' \
   '--max-file-size[maximum bytes to read per file]:bytes:' \
-  '--refresh-interval[TUI refresh interval]:duration:' \
+  '--refresh-interval[legacy scan interval]:duration:' \
+  '--poll-interval[safety-net rescan interval]:duration:' \
+  '--no-watch[disable filesystem watching]' \
+  '--act[enable agent actions]' \
+  '--no-act[disable agent actions]' \
   '--debug[show debug UI]' \
   '--dump-json[dump snapshot JSON and exit]' \
   '--dump-text[dump snapshot text and exit]' \

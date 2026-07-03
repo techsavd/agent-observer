@@ -53,45 +53,48 @@ type runConfig struct {
 }
 
 type diagnostics struct {
-	Version       string                   `json:"version"`
-	Commit        string                   `json:"commit"`
-	BuildDate     string                   `json:"build_date"`
-	GoVersion     string                   `json:"go_version"`
-	GOOS          string                   `json:"goos"`
-	GOARCH        string                   `json:"goarch"`
-	SchemaVersion string                   `json:"schema_version"`
-	Config        runConfig                `json:"config"`
-	Batches       int                      `json:"batches"`
-	Tasks         int                      `json:"tasks"`
-	Warnings      []schema.WarningSnapshot `json:"warnings"`
-	Stats         schema.ScanStats         `json:"stats"`
+	Version       string                         `json:"version"`
+	Commit        string                         `json:"commit"`
+	BuildDate     string                         `json:"build_date"`
+	GoVersion     string                         `json:"go_version"`
+	GOOS          string                         `json:"goos"`
+	GOARCH        string                         `json:"goarch"`
+	SchemaVersion string                         `json:"schema_version"`
+	Config        runConfig                      `json:"config"`
+	Providers     map[string]schema.ProviderInfo `json:"providers"`
+	Sessions      int                            `json:"sessions"`
+	Batches       int                            `json:"batches"`
+	Tasks         int                            `json:"tasks"`
+	Warnings      []schema.WarningSnapshot       `json:"warnings"`
+	Stats         schema.ScanStats               `json:"stats"`
 }
 
 func Run(ctx context.Context, args []string) error {
 	home, _ := os.UserHomeDir()
 	defaultTasksDir := filepath.Join(home, ".claude", "tasks")
 	defaultTeamsDir := filepath.Join(home, ".claude", "teams")
+	fileCfg, fileCfgErr := loadFileConfig(defaultConfigPath())
 	opts := options{
 		command:         commandDashboard,
-		providersList:   firstNonEmptyEnv("AGENT_OBSERVER_PROVIDERS"),
-		claudeDir:       firstNonEmptyEnv("AGENT_OBSERVER_CLAUDE_DIR"),
-		codexDir:        firstNonEmptyEnv("AGENT_OBSERVER_CODEX_DIR"),
-		cursorDir:       firstNonEmptyEnv("AGENT_OBSERVER_CURSOR_DIR"),
-		pluginsDir:      firstNonEmptyEnv("AGENT_OBSERVER_PLUGINS_DIR"),
+		providersList:   firstNonEmpty2(firstNonEmptyEnv("AGENT_OBSERVER_PROVIDERS"), fileCfg.Providers),
+		claudeDir:       firstNonEmpty2(firstNonEmptyEnv("AGENT_OBSERVER_CLAUDE_DIR"), fileCfg.ClaudeDir),
+		codexDir:        firstNonEmpty2(firstNonEmptyEnv("AGENT_OBSERVER_CODEX_DIR"), fileCfg.CodexDir),
+		cursorDir:       firstNonEmpty2(firstNonEmptyEnv("AGENT_OBSERVER_CURSOR_DIR"), fileCfg.CursorDir),
+		pluginsDir:      firstNonEmpty2(firstNonEmptyEnv("AGENT_OBSERVER_PLUGINS_DIR"), fileCfg.PluginsDir),
 		tasksDir:        firstNonEmptyEnv("AGENT_OBSERVER_TASKS_DIR", "CLAUDE_TASKS_DIR"),
 		teamsDir:        firstNonEmptyEnv("AGENT_OBSERVER_TEAMS_DIR", "CLAUDE_TEAMS_DIR"),
 		maxFileSize:     envInt64("AGENT_OBSERVER_MAX_FILE_SIZE", claude.DefaultMaxFileSize),
 		refreshInterval: envDuration("AGENT_OBSERVER_REFRESH_INTERVAL", defaultRefreshInterval),
-		pollInterval:    envDuration("AGENT_OBSERVER_POLL_INTERVAL", defaultPollInterval),
-		noWatch:         envBool("AGENT_OBSERVER_NO_WATCH", false),
-		shell:           envBool("AGENT_OBSERVER_SHELL", false),
+		pollInterval:    envDuration("AGENT_OBSERVER_POLL_INTERVAL", fileCfg.pollIntervalOr(defaultPollInterval)),
+		noWatch:         envBool("AGENT_OBSERVER_NO_WATCH", fileCfg.NoWatch),
+		shell:           envBool("AGENT_OBSERVER_SHELL", fileCfg.Shell),
 		noShell:         envBool("AGENT_OBSERVER_NO_SHELL", false),
-		act:             envBool("AGENT_OBSERVER_ACT", false),
+		act:             envBool("AGENT_OBSERVER_ACT", fileCfg.Act),
 		noAct:           envBool("AGENT_OBSERVER_NO_ACT", false),
-		redact:          envBool("AGENT_OBSERVER_REDACT", false),
+		redact:          envBool("AGENT_OBSERVER_REDACT", fileCfg.Redact),
 		focus:           "all",
-		logFile:         firstNonEmptyEnv("AGENT_OBSERVER_LOG_FILE"),
-		logLevel:        firstNonEmptyEnv("AGENT_OBSERVER_LOG_LEVEL"),
+		logFile:         firstNonEmpty2(firstNonEmptyEnv("AGENT_OBSERVER_LOG_FILE"), fileCfg.LogFile),
+		logLevel:        firstNonEmpty2(firstNonEmptyEnv("AGENT_OBSERVER_LOG_LEVEL"), fileCfg.LogLevel),
 		telemetry:       firstNonEmptyEnv("AGENT_OBSERVER_TELEMETRY"),
 		telemetryURL:    firstNonEmptyEnv("AGENT_OBSERVER_TELEMETRY_ENDPOINT"),
 	}
@@ -171,6 +174,9 @@ func Run(ctx context.Context, args []string) error {
 		return fmt.Errorf("open log file: %w", err)
 	}
 	defer cleanup()
+	if fileCfgErr != nil {
+		logger.Warn("invalid config file; ignoring", slog.String("path", defaultConfigPath()), slog.String("error", fileCfgErr.Error()))
+	}
 	logger.Info("starting",
 		slog.String("version", Version),
 		slog.String("command", string(opts.command)),
@@ -282,7 +288,12 @@ func Run(ctx context.Context, args []string) error {
 		WithRefreshInterval(opts.refreshInterval).
 		WithRefreshRequester(scanEngine.RequestRefresh).
 		WithShellEnabled(shellEnabled(opts)).
-		WithActions(actors, actEnabled(opts))
+		WithActions(actors, actEnabled(opts)).
+		WithActionHook(func(action, provider string) {
+			logger.Info("agent action", slog.String("action", action), slog.String("provider", provider))
+			trackTelemetry(context.Background(), logger, telemetry,
+				buildTelemetryEvent("action."+action, opts, memory.Snapshot(), ""))
+		})
 	engineCtx, stopEngine := context.WithCancel(ctx)
 	defer stopEngine()
 	program := tea.NewProgram(model, tea.WithContext(ctx), tea.WithAltScreen(), tea.WithMouseCellMotion())
@@ -339,6 +350,8 @@ func dumpDiagnosticsJSON(out io.Writer, config runConfig, world schema.WorldSnap
 		GOARCH:        runtime.GOARCH,
 		SchemaVersion: schema.CurrentSchemaVersion,
 		Config:        config,
+		Providers:     world.Providers,
+		Sessions:      len(world.Sessions),
 		Batches:       len(world.Batches),
 		Tasks:         len(world.Tasks),
 		Warnings:      world.Warnings,

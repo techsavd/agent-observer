@@ -121,6 +121,7 @@ func (m *Model) submitLauncher() tea.Cmd {
 		return nil
 	}
 	l.open = false
+	m.trackAction("launch", actor.Name)
 	return m.spawnRun(actor.Name, argv, cwd)
 }
 
@@ -146,6 +147,7 @@ func (m *Model) resumeSelected() tea.Cmd {
 		if info, statErr := os.Stat(cwd); cwd == "" || statErr != nil || !info.IsDir() {
 			cwd, _ = os.Getwd()
 		}
+		m.trackAction("resume", actor.Name)
 		return m.spawnRun(actor.Name, argv, cwd)
 	}
 	m.actionError = "no actionable provider for " + session.Provider
